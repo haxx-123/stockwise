@@ -33,12 +33,15 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedToDelete, setSelectedToDelete] = useState<Set<string>>(new Set());
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
+  
+  // Mobile Details View
+  const [mobileDetailItem, setMobileDetailItem] = useState<AggregatedStock | null>(null);
 
   const loadData = async () => {
     setLoading(true);
     try {
       const [p, b, s] = await Promise.all([
-        dataService.getProducts(),
+        dataService.getProducts(false, currentStore),
         dataService.getBatches(currentStore === 'all' ? undefined : currentStore),
         dataService.getStores()
       ]);
@@ -76,7 +79,6 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
               fps: 10, 
               qrbox: { width: 250, height: 150 },
               aspectRatio: 1.0,
-              formatsToSupport: [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ]
           };
           
           await html5QrCode.start({ facingMode: "environment" }, config, (decodedText: string) => {
@@ -99,7 +101,7 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
 
   useEffect(() => () => { if(scannerRef.current) stopScanner(); }, []);
 
-  // --- DATA AGGREGATION & FILTERING ---
+  // --- DATA AGGREGATION ---
   const aggregatedData = useMemo(() => {
     let filteredBatches = batches;
     if (advFilters.batch) filteredBatches = filteredBatches.filter(b => b.batch_number?.toLowerCase().includes(advFilters.batch.toLowerCase()));
@@ -127,12 +129,9 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
             const q = searchQuery.trim();
             const nameMatch = matchSearch(item.product.name, q);
             const skuMatch = item.product.sku?.toLowerCase().includes(q.toLowerCase());
-            const pinyinMatch = item.product.pinyin?.toLowerCase().includes(q.toLowerCase());
             const batchMatch = item.batches.some(b => b.batch_number?.toLowerCase().includes(q.toLowerCase()));
-            
-            if (!nameMatch && !skuMatch && !pinyinMatch && !batchMatch) return false;
+            if (!nameMatch && !skuMatch && !batchMatch) return false;
         }
-        
         return true;
     });
 
@@ -143,15 +142,11 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   
   // Pagination
   const totalPages = Math.ceil(aggregatedData.length / PAGE_SIZE);
-  // Ensure page is valid
   useEffect(() => { if (page > totalPages && totalPages > 0) setPage(totalPages); }, [totalPages]);
 
   const paginatedData = aggregatedData.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
   // Pagination Handlers
-  const handlePageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
-      setInputPage(Number(e.target.value));
-  };
   const commitPageInput = () => {
       let p = inputPage;
       if (isNaN(p)) p = 1;
@@ -161,21 +156,14 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
       setInputPage(p);
   };
 
-  // Bulk Delete
+  // Bulk Delete Logic
   const handleBulkDelete = async () => {
       const totalCount = selectedToDelete.size + selectedBatchIds.size;
       if (totalCount === 0) return;
-
-      if (!confirm(`确认删除选中的 ${selectedToDelete.size} 个商品和 ${selectedBatchIds.size} 个批次?`)) return;
+      if (!confirm(`确认删除选中的 ${selectedToDelete.size} 个商品和 ${selectedBatchIds.size} 个批次? (操作将归档)`)) return;
       try {
-          // 1. Delete specific batches
-          for (const bid of selectedBatchIds) {
-              await dataService.deleteBatch(bid);
-          }
-          // 2. Delete products
-          for (const pid of selectedToDelete) {
-              await dataService.deleteProduct(pid);
-          }
+          for (const bid of selectedBatchIds) await dataService.deleteBatch(bid);
+          for (const pid of selectedToDelete) await dataService.deleteProduct(pid);
           alert("删除成功");
           setSelectedToDelete(new Set());
           setSelectedBatchIds(new Set());
@@ -187,13 +175,10 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   const toggleSelectProduct = (pid: string, batchIds: string[]) => {
       const newProdSet = new Set(selectedToDelete);
       const newBatchSet = new Set(selectedBatchIds);
-      
       if (newProdSet.has(pid)) {
-          // Deselect Product -> Deselect all its batches
           newProdSet.delete(pid);
           batchIds.forEach(bid => newBatchSet.delete(bid));
       } else {
-          // Select Product -> Select all its batches
           newProdSet.add(pid);
           batchIds.forEach(bid => newBatchSet.add(bid));
       }
@@ -207,21 +192,75 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
       setSelectedBatchIds(newSet);
   };
 
+  const handleSelectAllPage = () => {
+      const newProdSet = new Set(selectedToDelete);
+      const newBatchSet = new Set(selectedBatchIds);
+      const allSelected = paginatedData.every(i => newProdSet.has(i.product.id));
+
+      paginatedData.forEach(item => {
+          if (allSelected) {
+              newProdSet.delete(item.product.id);
+              item.batches.forEach(b => newBatchSet.delete(b.id));
+          } else {
+              newProdSet.add(item.product.id);
+              item.batches.forEach(b => newBatchSet.add(b.id));
+          }
+      });
+      setSelectedToDelete(newProdSet);
+      setSelectedBatchIds(newBatchSet);
+  };
+
   if (loading) return <div className="p-8 dark:text-white">加载中...</div>;
+
+  // Mobile Detail View
+  if (mobileDetailItem) {
+      return (
+          <div className="bg-gray-50 dark:bg-gray-900 min-h-screen p-4">
+              <div className="flex items-center gap-3 mb-4">
+                  <button onClick={() => setMobileDetailItem(null)} className="p-2 bg-white dark:bg-gray-800 rounded-full shadow"><Icons.ArrowRightLeft size={20} className="transform rotate-180"/></button>
+                  <h1 className="font-bold text-lg">{mobileDetailItem.product.name}</h1>
+              </div>
+              <div className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm mb-4">
+                  <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div><span className="text-gray-500">SKU:</span> {ph(mobileDetailItem.product.sku)}</div>
+                      <div><span className="text-gray-500">类别:</span> {ph(mobileDetailItem.product.category)}</div>
+                      <div><span className="text-gray-500">总库存:</span> <span className="font-bold text-blue-600">{formatUnit(mobileDetailItem.totalQuantity, mobileDetailItem.product)}</span></div>
+                  </div>
+              </div>
+              <h3 className="font-bold mb-2 ml-2 text-gray-500">批次列表</h3>
+              <div className="space-y-3">
+                  {mobileDetailItem.batches.length === 0 && <div className="text-center text-gray-400 py-4">无批次信息</div>}
+                  {mobileDetailItem.batches.map(b => (
+                      <div key={b.id} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm">
+                          <div className="flex justify-between items-start mb-2">
+                              <span className="font-mono bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-xs">{ph(b.batch_number)}</span>
+                              <span className="font-bold">{formatUnit(b.quantity, mobileDetailItem.product)}</span>
+                          </div>
+                          <div className="text-xs text-gray-500 mb-3">有效期: {b.expiry_date ? b.expiry_date.split('T')[0] : '/'}</div>
+                      </div>
+                  ))}
+              </div>
+          </div>
+      )
+  }
 
   return (
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
       {/* Search Bar & Tools */}
       <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-4">
           <div className="flex flex-col md:flex-row gap-4 items-center">
-              
               <button 
                 onClick={() => deleteMode ? handleBulkDelete() : setDeleteMode(true)}
                 className={`px-4 py-2 rounded-lg font-bold transition-colors whitespace-nowrap w-full md:w-auto ${deleteMode ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
               >
-                 {deleteMode ? `确认删除 (${selectedToDelete.size + selectedBatchIds.size})` : '删除 Del'}
+                 {deleteMode ? `确认删除 (${selectedToDelete.size + selectedBatchIds.size})` : '删除 (管理)'}
               </button>
-              {deleteMode && <button onClick={()=>{setDeleteMode(false); setSelectedToDelete(new Set()); setSelectedBatchIds(new Set());}} className="text-gray-500 underline text-sm">取消</button>}
+              {deleteMode && (
+                  <div className="flex items-center gap-2">
+                      <button onClick={handleSelectAllPage} className="text-sm bg-gray-100 px-2 py-1 rounded">全选本页</button>
+                      <button onClick={()=>{setDeleteMode(false); setSelectedToDelete(new Set()); setSelectedBatchIds(new Set());}} className="text-gray-500 underline text-sm">取消</button>
+                  </div>
+              )}
 
               <div className="flex-1 relative w-full">
                   <input 
@@ -250,19 +289,13 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
                     <button onClick={stopScanner} className="bg-red-100 text-red-700 px-4 py-2 rounded-lg flex items-center gap-2 whitespace-nowrap">停止</button>
                 )}
 
-                <button 
-                    onClick={() => setAdvancedOpen(!advancedOpen)}
-                    className={`px-4 py-2 rounded-lg border ${advancedOpen ? 'bg-blue-50 border-blue-200 text-blue-600' : 'bg-white dark:bg-gray-700 border-gray-200 dark:border-gray-600 dark:text-white'}`}
-                >
-                    高级
-                </button>
+                <button onClick={() => setAdvancedOpen(!advancedOpen)} className="px-4 py-2 rounded-lg border dark:border-gray-600">高级</button>
               </div>
           </div>
           {advancedOpen && (
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-2 border-t border-gray-100 dark:border-gray-700">
-                  <input placeholder="批号..." className="border p-2 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={advFilters.batch} onChange={e => setAdvFilters({...advFilters, batch: e.target.value})} />
-                  <input placeholder="SKU..." className="border p-2 rounded text-sm dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={advFilters.sku} onChange={e => setAdvFilters({...advFilters, sku: e.target.value})} />
-                  {currentStore === 'all' && <div className="p-2 text-sm text-gray-500">门店选择: 所有 (请在右上角切换门店以过滤)</div>}
+                  <input placeholder="批号..." className="border p-2 rounded text-sm dark:bg-gray-700" value={advFilters.batch} onChange={e => setAdvFilters({...advFilters, batch: e.target.value})} />
+                  <input placeholder="SKU..." className="border p-2 rounded text-sm dark:bg-gray-700" value={advFilters.sku} onChange={e => setAdvFilters({...advFilters, sku: e.target.value})} />
               </div>
           )}
           
@@ -280,42 +313,26 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
         toggleSelectProduct={toggleSelectProduct}
         selectedBatchIds={selectedBatchIds}
         toggleSelectBatch={toggleSelectBatch}
+        onMobileClick={(item: any) => setMobileDetailItem(item)}
       />
 
-      {/* Custom Pagination: Input and Total */}
+      {/* Custom Pagination */}
       <div className="flex flex-wrap justify-between items-center bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm gap-4">
-           <button disabled={page<=1} onClick={()=>setPage(p=>Math.max(1, p-1))} className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50 dark:text-white transition-colors hover:bg-gray-200 dark:hover:bg-gray-600">
-             上一页
-           </button>
-           
+           <button disabled={page<=1} onClick={()=>setPage(p=>Math.max(1, p-1))} className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50 dark:text-white">上一页</button>
            <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-900 px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700">
                <span className="text-gray-500 dark:text-gray-400 text-sm font-medium">当前</span>
-               <input 
-                 type="number" 
-                 min="1" 
-                 max={totalPages} 
-                 className="w-16 text-center bg-white dark:bg-gray-800 border dark:border-gray-600 rounded text-sm dark:text-white font-bold p-1 focus:ring-2 focus:ring-blue-500 outline-none"
-                 value={inputPage} 
-                 onChange={handlePageInput}
-                 onBlur={commitPageInput}
-                 onKeyDown={e => e.key === 'Enter' && commitPageInput()}
-               />
+               <input type="number" min="1" max={totalPages} className="w-16 text-center bg-white dark:bg-gray-800 border dark:border-gray-600 rounded text-sm font-bold p-1" value={inputPage} onChange={e => setInputPage(Number(e.target.value))} onBlur={commitPageInput} onKeyDown={e => e.key === 'Enter' && commitPageInput()} />
                <span className="text-gray-500 dark:text-gray-400 text-sm font-medium">/ 共 {totalPages} 页</span>
            </div>
-
-           <button disabled={page>=totalPages} onClick={()=>setPage(p=>Math.min(totalPages, p+1))} className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50 dark:text-white transition-colors hover:bg-gray-200 dark:hover:bg-gray-600">
-             下一页
-           </button>
+           <button disabled={page>=totalPages} onClick={()=>setPage(p=>Math.min(totalPages, p+1))} className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50 dark:text-white">下一页</button>
       </div>
     </div>
   );
 };
 
 // --- TABLE COMPONENT ---
-export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, selectedToDelete, toggleSelectProduct, selectedBatchIds, toggleSelectBatch, compact }: any) => {
+export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, selectedToDelete, toggleSelectProduct, selectedBatchIds, toggleSelectBatch, onMobileClick, compact }: any) => {
     const [adjustBatch, setAdjustBatch] = useState<Batch | null>(null);
-    const [adjustProduct, setAdjustProduct] = useState<Product | null>(null);
-    const [billBatch, setBillBatch] = useState<Batch | null>(null);
     const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
 
     const toggleExpand = (pid: string) => {
@@ -325,9 +342,9 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
     };
 
     return (
-        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-x-auto shadow-sm">
-             {/* DESKTOP TABLE VIEW */}
-             <table className="w-full text-left border-collapse min-w-[600px] hidden md:table">
+        <>
+        <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm hidden md:block">
+             <table className="w-full text-left border-collapse">
                 <thead className="bg-gray-100 dark:bg-gray-900 text-xs text-gray-600 dark:text-gray-400 uppercase font-semibold">
                     <tr>
                          <th className="px-6 py-4 w-10"></th>
@@ -336,7 +353,6 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                          <th className="px-6 py-4">类别</th>
                          <th className="px-6 py-4">SKU</th>
                          <th className="px-6 py-4">总库存</th>
-                         {!compact && <th className="px-6 py-4 text-right">操作</th>}
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -346,83 +362,39 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                             <React.Fragment key={item.product.id}>
                                 <tr className="hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer transition-colors" onClick={() => toggleExpand(item.product.id)}>
                                     <td className="px-6 py-4 text-center">
-                                        <div className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
-                                            <Icons.ChevronRight size={16} className="text-gray-400" />
-                                        </div>
+                                        <Icons.ChevronRight size={16} className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
                                     </td>
                                     {deleteMode && (
                                         <td className="px-2 py-4 text-center" onClick={e=>e.stopPropagation()}>
-                                            <input 
-                                                type="checkbox" 
-                                                checked={selectedToDelete.has(item.product.id)} 
-                                                onChange={()=>toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id))} 
-                                                className="w-5 h-5 rounded border-gray-300 text-red-600 focus:ring-red-500 cursor-pointer" 
-                                            />
+                                            <input type="checkbox" checked={selectedToDelete.has(item.product.id)} onChange={()=>toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id))} className="w-5 h-5 rounded cursor-pointer" />
                                         </td>
                                     )}
                                     <td className="px-6 py-4 font-bold text-gray-800 dark:text-white">{item.product.name}</td>
                                     <td className="px-6 py-4 text-gray-500 dark:text-gray-400">{ph(item.product.category)}</td>
                                     <td className="px-6 py-4 font-mono text-sm text-gray-400">{ph(item.product.sku)}</td>
-                                    <td className="px-6 py-4 font-medium text-blue-700 dark:text-blue-400">
-                                        {formatUnit(item.totalQuantity, item.product)}
-                                    </td>
-                                    {!compact && (
-                                        <td className="px-6 py-4 text-right" onClick={e=>e.stopPropagation()}>
-                                            <button 
-                                                onClick={() => setAdjustProduct(item.product)}
-                                                className="text-gray-500 hover:text-blue-600 dark:text-gray-400 dark:hover:text-blue-300 text-xs font-bold border px-2 py-1 rounded dark:border-gray-600"
-                                            >
-                                                调整信息
-                                            </button>
-                                        </td>
-                                    )}
+                                    <td className="px-6 py-4 font-medium text-blue-700 dark:text-blue-400">{formatUnit(item.totalQuantity, item.product)}</td>
                                 </tr>
-                                
                                 {isExpanded && (
                                     <tr className="bg-gray-50/50 dark:bg-gray-900/50 animate-fade-in">
-                                        <td colSpan={deleteMode ? 7 : 6} className="p-0">
+                                        <td colSpan={deleteMode ? 6 : 5} className="p-0">
                                             <div className="border-t border-b border-gray-200 dark:border-gray-700">
                                                 <table className="w-full text-sm">
                                                     <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                                                         {item.batches.map((batch: any) => (
                                                             <tr key={batch.id} className="hover:bg-white dark:hover:bg-gray-800">
                                                                 <td className="w-16 text-center">
-                                                                    {deleteMode && (
-                                                                         <div className="flex justify-center w-full pl-6">
-                                                                            <input 
-                                                                                type="checkbox" 
-                                                                                checked={selectedBatchIds.has(batch.id)} 
-                                                                                onChange={()=>toggleSelectBatch(batch.id)} 
-                                                                                className="w-4 h-4 rounded border-gray-300 text-red-400 focus:ring-red-400 cursor-pointer" 
-                                                                            />
-                                                                         </div>
-                                                                    )}
+                                                                    {deleteMode && <input type="checkbox" checked={selectedBatchIds.has(batch.id)} onChange={()=>toggleSelectBatch(batch.id)} className="w-4 h-4" />}
                                                                 </td>
                                                                 <td className="pl-4 py-3 font-mono text-gray-600 dark:text-gray-400 w-1/4">
-                                                                    <span className="text-xs text-gray-400 mr-2">批号:</span>
-                                                                    {ph(batch.batch_number)}
+                                                                    <span className="text-xs text-gray-400 mr-2">批号:</span>{ph(batch.batch_number)}
                                                                 </td>
-                                                                {currentStore === 'all' && <td className="px-4 py-3 text-purple-600 dark:text-purple-400 font-medium w-1/6">{batch.store_name}</td>}
+                                                                {currentStore === 'all' && <td className="px-4 py-3 text-purple-600 dark:text-purple-400 w-1/6">{batch.store_name}</td>}
                                                                 <td className="px-4 py-3 text-gray-600 dark:text-gray-400 w-1/4">
-                                                                    <span className="text-xs text-gray-400 mr-2">有效期:</span>
-                                                                    {batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}
+                                                                    <span className="text-xs text-gray-400 mr-2">有效期:</span>{batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}
                                                                 </td>
-                                                                <td className="px-4 py-3 dark:text-gray-200 font-bold w-1/6">
-                                                                    {formatUnit(batch.quantity, item.product)}
-                                                                </td>
-                                                                <td className="px-4 py-3 text-right flex justify-end gap-4 items-center">
-                                                                    <button 
-                                                                        onClick={() => setAdjustBatch(batch)}
-                                                                        className="text-blue-600 dark:text-blue-400 hover:text-blue-800 font-bold text-xs"
-                                                                    >
-                                                                        调整
-                                                                    </button>
-                                                                    <button 
-                                                                        onClick={() => setBillBatch(batch)}
-                                                                        className="px-3 py-1 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 font-bold text-xs hover:bg-blue-200"
-                                                                    >
-                                                                        开单
-                                                                    </button>
+                                                                <td className="px-4 py-3 dark:text-gray-200 font-bold w-1/6">{formatUnit(batch.quantity, item.product)}</td>
+                                                                <td className="px-4 py-3 text-right">
+                                                                    <button onClick={() => setAdjustBatch(batch)} className="text-blue-600 font-bold text-xs">调整</button>
                                                                 </td>
                                                             </tr>
                                                         ))}
@@ -437,140 +409,37 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                     })}
                 </tbody>
              </table>
-
-             {/* MOBILE CARD VIEW */}
-             <div className="md:hidden flex flex-col divide-y divide-gray-200 dark:divide-gray-700">
-                {data.map((item: any) => {
-                     const isExpanded = expandedProducts.has(item.product.id);
-                     return (
-                         <div key={item.product.id} className="p-4 bg-white dark:bg-gray-800">
-                             <div className="flex justify-between items-start" onClick={() => toggleExpand(item.product.id)}>
-                                 <div className="flex items-start gap-3">
-                                     {deleteMode && (
-                                        <input 
-                                            type="checkbox" 
-                                            checked={selectedToDelete.has(item.product.id)} 
-                                            onChange={(e)=>{e.stopPropagation(); toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id));}} 
-                                            className="mt-1 w-5 h-5 rounded border-gray-300 text-red-600 focus:ring-red-500" 
-                                        />
-                                     )}
-                                     <div>
-                                         <h3 className="font-bold text-gray-900 dark:text-white">{item.product.name}</h3>
-                                         <p className="text-xs text-gray-500">{ph(item.product.category)} | SKU: {ph(item.product.sku)}</p>
-                                     </div>
-                                 </div>
-                                 <div className="text-right">
-                                     <p className="font-bold text-blue-600 dark:text-blue-400">{formatUnit(item.totalQuantity, item.product)}</p>
-                                     <Icons.ChevronDown size={16} className={`ml-auto text-gray-400 transform transition ${isExpanded ? 'rotate-180' : ''}`} />
-                                 </div>
-                             </div>
-
-                             {!compact && isExpanded && (
-                                 <div className="mt-3 flex justify-end">
-                                     <button onClick={() => setAdjustProduct(item.product)} className="text-xs border px-2 py-1 rounded dark:border-gray-600 dark:text-gray-300">调整信息</button>
-                                 </div>
-                             )}
-
-                             {isExpanded && (
-                                 <div className="mt-4 space-y-3 pl-4 border-l-2 border-gray-100 dark:border-gray-700">
-                                     {item.batches.map((batch: any) => (
-                                         <div key={batch.id} className="bg-gray-50 dark:bg-gray-900/50 p-3 rounded text-sm relative">
-                                             {deleteMode && (
-                                                 <div className="absolute top-2 right-2">
-                                                    <input type="checkbox" checked={selectedBatchIds.has(batch.id)} onChange={()=>toggleSelectBatch(batch.id)} className="w-4 h-4 text-red-400" />
-                                                 </div>
-                                             )}
-                                             <div className="grid grid-cols-2 gap-y-1">
-                                                 <span className="text-gray-500 text-xs">批号:</span>
-                                                 <span className="font-mono">{ph(batch.batch_number)}</span>
-                                                 <span className="text-gray-500 text-xs">有效期:</span>
-                                                 <span>{batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}</span>
-                                                 <span className="text-gray-500 text-xs">数量:</span>
-                                                 <span className="font-bold">{formatUnit(batch.quantity, item.product)}</span>
-                                             </div>
-                                             <div className="mt-2 flex gap-2">
-                                                <button onClick={() => setAdjustBatch(batch)} className="flex-1 py-1 bg-white dark:bg-gray-700 border dark:border-gray-600 rounded text-xs">调整</button>
-                                                <button onClick={() => setBillBatch(batch)} className="flex-1 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded text-xs font-bold">开单</button>
-                                             </div>
-                                         </div>
-                                     ))}
-                                 </div>
-                             )}
-                         </div>
-                     );
-                })}
-             </div>
-             
-             {/* Modals */}
-             {adjustBatch && (
-                <AdjustBatchModal 
-                    batch={adjustBatch} 
-                    onClose={() => setAdjustBatch(null)} 
-                    onSuccess={() => { setAdjustBatch(null); onRefresh(); }} 
-                    product={data.find((i:any) => i.product.id === adjustBatch.product_id)?.product}
-                />
-             )}
-             {adjustProduct && (
-                 <AdjustProductModal 
-                    product={adjustProduct}
-                    onClose={() => setAdjustProduct(null)}
-                    onSuccess={() => { setAdjustProduct(null); onRefresh(); }}
-                 />
-             )}
-             {billBatch && (
-                <BillModal 
-                    batch={billBatch} 
-                    onClose={() => setBillBatch(null)} 
-                    onSuccess={() => { setBillBatch(null); onRefresh(); }} 
-                    product={data.find((i:any) => i.product.id === billBatch.product_id)?.product}
-                />
-             )}
         </div>
+
+        {/* MOBILE CARD VIEW */}
+        <div className="md:hidden space-y-3">
+             {data.map((item: any) => (
+                 <div key={item.product.id} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700 flex justify-between items-center" onClick={() => onMobileClick(item)}>
+                     <div className="flex items-center gap-3">
+                         {deleteMode && (
+                             <input type="checkbox" checked={selectedToDelete.has(item.product.id)} onChange={(e)=>{e.stopPropagation(); toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id));}} className="w-5 h-5 rounded" />
+                         )}
+                         <div>
+                             <h3 className="font-bold text-gray-800 dark:text-white">{item.product.name}</h3>
+                             <p className="text-xs text-gray-500">{formatUnit(item.totalQuantity, item.product)}</p>
+                         </div>
+                     </div>
+                     <Icons.ChevronRight size={20} className="text-gray-400" />
+                 </div>
+             ))}
+        </div>
+
+        {adjustBatch && (
+            <AdjustBatchModal 
+                batch={adjustBatch} 
+                onClose={() => setAdjustBatch(null)} 
+                onSuccess={() => { setAdjustBatch(null); onRefresh(); }} 
+                product={data.find((i:any) => i.product.id === adjustBatch.product_id)?.product}
+            />
+        )}
+        </>
     );
 };
-
-// ... MODALS ...
-const AdjustProductModal = ({ product, onClose, onSuccess }: any) => {
-    const [form, setForm] = useState({
-        name: product.name,
-        category: product.category || '',
-        sku: product.sku || '',
-        unit_name: product.unit_name || '',
-        split_unit_name: product.split_unit_name || '',
-        split_ratio: product.split_ratio || 10
-    });
-
-    const handleSave = async () => {
-        try {
-            await dataService.updateProduct(product.id, form);
-            onSuccess();
-        } catch(e: any) { alert(e.message); }
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in p-4">
-            <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md shadow-2xl dark:text-white">
-                <h2 className="text-xl font-bold mb-4">调整商品信息</h2>
-                <div className="space-y-4">
-                    <input className="w-full border p-2 rounded dark:bg-gray-700" placeholder="商品名称" value={form.name} onChange={e => setForm({...form, name: e.target.value})} />
-                    <div className="grid grid-cols-2 gap-4">
-                        <input className="border p-2 rounded dark:bg-gray-700" placeholder="SKU" value={form.sku} onChange={e => setForm({...form, sku: e.target.value})} />
-                        <input className="border p-2 rounded dark:bg-gray-700" placeholder="类别" value={form.category} onChange={e => setForm({...form, category: e.target.value})} />
-                    </div>
-                    <div className="grid grid-cols-3 gap-2">
-                         <input className="border p-2 rounded dark:bg-gray-700" placeholder="大单位" value={form.unit_name} onChange={e => setForm({...form, unit_name: e.target.value})} />
-                         <input className="border p-2 rounded dark:bg-gray-700" placeholder="小单位" value={form.split_unit_name} onChange={e => setForm({...form, split_unit_name: e.target.value})} />
-                         <input type="number" className="border p-2 rounded dark:bg-gray-700" placeholder="换算" value={form.split_ratio} onChange={e => setForm({...form, split_ratio: Number(e.target.value)})} />
-                    </div>
-                </div>
-                <div className="mt-6 flex justify-end gap-2">
-                    <button onClick={onClose} className="px-4 py-2 text-gray-600 dark:text-gray-300">取消</button>
-                    <button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded">保存</button>
-                </div>
-            </div>
-        </div>
-    );
-}
 
 const AdjustBatchModal = ({ batch, product, onClose, onSuccess }: any) => {
     const [form, setForm] = useState({
@@ -578,7 +447,6 @@ const AdjustBatchModal = ({ batch, product, onClose, onSuccess }: any) => {
         expiry_date: batch.expiry_date ? batch.expiry_date.split('T')[0] : '',
         quantity: batch.quantity,
     });
-
     const handleSave = async () => {
         try {
             await dataService.adjustBatch(batch.id, {
@@ -589,70 +457,19 @@ const AdjustBatchModal = ({ batch, product, onClose, onSuccess }: any) => {
             onSuccess();
         } catch(e) { alert("保存失败"); }
     };
-
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in p-4">
             <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-md shadow-2xl dark:text-white">
                 <h2 className="text-xl font-bold mb-4">调整批次 ({product.name})</h2>
                 <div className="space-y-4">
-                    <div>
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400">批号</label>
-                        <input className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600" value={form.batch_number} onChange={e => setForm({...form, batch_number: e.target.value})} />
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400">有效期</label>
-                        <input type="date" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600" value={form.expiry_date} onChange={e => setForm({...form, expiry_date: e.target.value})} />
-                    </div>
-                    <div>
-                        <label className="text-xs font-bold text-gray-500 dark:text-gray-400">库存 (最小单位)</label>
-                        <input type="number" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value})} />
-                    </div>
+                    <div><label className="text-xs font-bold text-gray-500">批号</label><input className="w-full border p-2 rounded dark:bg-gray-700" value={form.batch_number} onChange={e => setForm({...form, batch_number: e.target.value})} /></div>
+                    <div><label className="text-xs font-bold text-gray-500">有效期</label><input type="date" className="w-full border p-2 rounded dark:bg-gray-700" value={form.expiry_date} onChange={e => setForm({...form, expiry_date: e.target.value})} /></div>
+                    <div><label className="text-xs font-bold text-gray-500">库存</label><input type="number" className="w-full border p-2 rounded dark:bg-gray-700" value={form.quantity} onChange={e => setForm({...form, quantity: e.target.value})} /></div>
                 </div>
                 <div className="mt-6 flex justify-end gap-2">
-                    <button onClick={onClose} className="px-4 py-2 text-gray-600 dark:text-gray-300">取消</button>
+                    <button onClick={onClose} className="px-4 py-2 text-gray-600">取消</button>
                     <button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded">保存</button>
                 </div>
-            </div>
-        </div>
-    );
-};
-
-const BillModal = ({ batch, product, onClose, onSuccess }: any) => {
-    const [qty, setQty] = useState(0);
-    const [unit, setUnit] = useState<'BIG'|'SMALL'>('SMALL');
-    const [type, setType] = useState<'IN' | 'OUT'>('OUT');
-
-    const handleSubmit = async () => {
-        if(qty <= 0) return;
-        const actualQty = unit === 'BIG' ? qty * (product.split_ratio || 1) : qty;
-        try {
-            await dataService.updateStock(product.id, batch.store_id, actualQty, type, '快速开单', batch.id);
-            onSuccess();
-        } catch(e: any) { alert(e.message); }
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 animate-fade-in p-4">
-            <div className="bg-white dark:bg-gray-800 rounded-xl p-6 w-full max-w-xs shadow-2xl text-center dark:text-white">
-                <div className="flex border-b mb-4 dark:border-gray-600">
-                    <button onClick={() => setType('OUT')} className={`flex-1 py-2 font-bold ${type === 'OUT' ? 'text-blue-600 border-b-2 border-blue-600' : 'text-gray-500'}`}>出库</button>
-                    <button onClick={() => setType('IN')} className={`flex-1 py-2 font-bold ${type === 'IN' ? 'text-green-600 border-b-2 border-green-600' : 'text-gray-500'}`}>入库</button>
-                </div>
-
-                <h2 className="text-lg font-bold mb-4">{product.name}</h2>
-                <div className="space-y-3 bg-gray-50 dark:bg-gray-700 p-4 rounded-lg">
-                     <div className="flex items-center gap-2">
-                        <input type="number" autoFocus className="w-20 border rounded p-2 text-center text-lg font-bold dark:bg-gray-600 dark:border-gray-500" value={qty} onChange={e => setQty(Number(e.target.value))} />
-                        <select className="border rounded p-2 flex-1 dark:bg-gray-600 dark:border-gray-500" value={unit} onChange={e => setUnit(e.target.value as any)}>
-                            <option value="SMALL">{ph(product.split_unit_name)}</option>
-                            <option value="BIG">{ph(product.unit_name)}</option>
-                        </select>
-                     </div>
-                </div>
-                <button onClick={handleSubmit} className={`w-full text-white py-3 rounded-lg font-bold mt-4 ${type === 'OUT' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-green-600 hover:bg-green-700'}`}>
-                    确认{type === 'OUT' ? '出库' : '入库'}
-                </button>
-                <button onClick={onClose} className="w-full mt-2 text-gray-400 text-sm">取消</button>
             </div>
         </div>
     );

@@ -3,6 +3,7 @@ export type Store = {
   id: string;
   name: string;
   location?: string;
+  is_archived?: boolean; // Soft Delete
 };
 
 export type Product = {
@@ -10,13 +11,14 @@ export type Product = {
   name: string;
   sku?: string | null;
   category?: string | null;
-  unit_name?: string | null;       // e.g., "箱"
-  split_unit_name?: string | null; // e.g., "瓶"
-  split_ratio?: number | null;     // e.g., 24
+  unit_name?: string | null;       
+  split_unit_name?: string | null; 
+  split_ratio?: number | null;     
   min_stock_level?: number | null; 
   image_url?: string | null;
   pinyin?: string | null; 
-  is_archived?: boolean; // Soft delete
+  is_archived?: boolean; 
+  bound_store_id?: string | null; // Strict Isolation
 };
 
 export type Batch = {
@@ -27,12 +29,11 @@ export type Batch = {
   quantity: number;        
   expiry_date?: string | null;     
   created_at: string;
-  is_archived?: boolean; // Soft delete
-  // Optional join fields
+  is_archived?: boolean; 
   store_name?: string; 
 };
 
-export type TransactionType = 'IN' | 'OUT' | 'TRANSFER' | 'ADJUST' | 'IMPORT' | 'DELETE';
+export type TransactionType = 'IN' | 'OUT' | 'TRANSFER' | 'ADJUST' | 'IMPORT' | 'DELETE' | 'RESTORE';
 
 export type Transaction = {
   id: string;
@@ -41,13 +42,12 @@ export type Transaction = {
   store_id?: string;
   batch_id?: string;
   quantity: number; 
-  balance_after?: number; // Snapshot of qty after tx
+  balance_after?: number; 
   timestamp: string;
   note?: string;
   operator?: string; 
-  snapshot_data?: any; // JSONB full copy of batch/product at time of tx
-  is_undone?: boolean; // NEW: If true, this log is hidden/reverted
-  // Join fields
+  snapshot_data?: any; 
+  is_undone?: boolean; 
   product?: { name: string };
   store?: { name: string };
 };
@@ -56,7 +56,7 @@ export type AuditLog = {
   id: number;
   table_name: string;
   record_id: string;
-  operation: 'INSERT' | 'UPDATE' | 'DELETE';
+  operation: 'INSERT' | 'UPDATE' | 'DELETE' | 'CLIENT_ACTION';
   old_data: any;
   new_data: any;
   timestamp: string;
@@ -69,8 +69,13 @@ export interface UserPermissions {
     logs_level: 'A' | 'B' | 'C'; // A: System, B: Lower Level, C: Self
     announcement_rule: 'PUBLISH' | 'VIEW';
     store_scope: 'GLOBAL' | 'LIMITED';
-    delete_mode: 'HARD' | 'SOFT';
+    // delete_mode REMOVED - Always Soft
     show_excel: boolean;
+    
+    // New Permission Dimensions
+    view_peers: boolean; // Can view/manage users of same level
+    view_self_in_list: boolean;
+    hide_perm_page: boolean; 
 }
 
 export type User = {
@@ -80,32 +85,24 @@ export type User = {
   role_level: RoleLevel; 
   permissions: UserPermissions;
   allowed_store_ids: string[]; // For LIMITED scope
+  is_archived?: boolean; // Soft Delete
 };
 
 export type Announcement = {
   id: string;
   title: string;
-  content: string; // HTML supported
+  content: string; 
   creator: string;
   creator_id?: string;
-  
-  // Targeting
-  target_users: string[]; // User IDs, empty = all
-  
-  // Visibility
+  target_users: string[]; 
   valid_until: string;
   popup_config: {
       enabled: boolean;
       duration: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'FOREVER';
   };
-  
-  // Permissions
-  allow_delete: boolean; // Can receiver hide it?
-  
-  // Status
-  is_force_deleted?: boolean; // Admin deleted for everyone
-  read_by?: string[]; // IDs of users who read/hid it
-  
+  allow_delete: boolean; // "Can hide"
+  is_force_deleted?: boolean; // Admin soft delete (invalid for everyone)
+  read_by?: string[]; 
   created_at: string;
 };
 

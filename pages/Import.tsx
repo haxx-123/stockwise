@@ -18,6 +18,8 @@ export const Import: React.FC = () => {
     const [mapping, setMapping] = useState<Record<string, string>>({});
     const [step, setStep] = useState(1); // 1: Upload, 2: Map, 3: Processing
     const [logs, setLogs] = useState<string[]>([]);
+    const [targetStoreId, setTargetStoreId] = useState('');
+    const [availableStores, setAvailableStores] = useState<any[]>([]);
 
     // --- MANUAL STATE ---
     const [manualForm, setManualForm] = useState({
@@ -38,6 +40,13 @@ export const Import: React.FC = () => {
 
     const addLog = (msg: string) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
     const user = authService.getCurrentUser();
+
+    useEffect(() => {
+        dataService.getStores().then(stores => {
+            setAvailableStores(stores);
+            if (stores.length > 0) setTargetStoreId(stores[0].id);
+        });
+    }, []);
 
     // --- SCANNER ---
     const startScanner = async () => {
@@ -83,23 +92,16 @@ export const Import: React.FC = () => {
                 const bstr = evt.target?.result;
                 const wb = (window.XLSX).read(bstr, { type: 'binary' });
                 const ws = wb.Sheets[wb.SheetNames[0]];
-                
-                // Read as array of arrays, NO header assumption
                 const data = (window.XLSX).utils.sheet_to_json(ws, { header: 1 }); 
                 
                 if (data.length < 1) return alert("Excel 为空");
-
-                // Generate F-headers (F0, F1, F2...)
                 const maxCols = data.reduce((max: number, row: any) => Math.max(max, row.length), 0);
                 const fHeaders = Array.from({length: maxCols}, (_, i) => `F${i}`);
                 
                 setHeaders(fHeaders);
-                setFileData(data); // Keep all data, including first row
+                setFileData(data); 
                 setStep(2);
-
-                // Reset Mapping
                 setMapping({});
-
             } catch (err: any) { alert("读取失败: " + err.message); }
         };
         reader.readAsBinaryString(file);
@@ -107,17 +109,19 @@ export const Import: React.FC = () => {
 
     const executeExcelImport = async () => {
         if (!mapping.name || !mapping.batch || !mapping.quantity) {
-            return alert("请完成必填项映射 (商品名称, 批号, 数量)");
+            return alert("请完成必填项映射");
         }
+        if (!targetStoreId) return alert("请选择目标门店");
+
         setStep(3);
         const client = getSupabaseClient();
         if (!client) return;
 
         try {
-            const storeId = (await dataService.getStores())[0]?.id || 'store_1';
+            // Isolation: Check products bound to this store OR global (bound_store_id is null)
+            const { data: existingProducts } = await client.from('products').select('id, name, bound_store_id')
+                .or(`bound_store_id.is.null,bound_store_id.eq.${targetStoreId}`);
             
-            // Prepare Product ID Map
-            const { data: existingProducts } = await client.from('products').select('id, name');
             const productIdMap = new Map<string, string>();
             existingProducts?.forEach(p => productIdMap.set(p.name, p.id));
 
@@ -127,7 +131,6 @@ export const Import: React.FC = () => {
             let success = 0;
 
             const getValue = (row: any[], field: string) => {
-                // mapping[field] is like 'F0', 'F1'
                 const colIndex = parseInt(mapping[field]?.substring(1) || '-1');
                 return colIndex > -1 ? row[colIndex] : null;
             };
@@ -136,15 +139,17 @@ export const Import: React.FC = () => {
                 const name = sanitizeStr(getValue(row, 'name'));
                 const batch = sanitizeStr(getValue(row, 'batch'));
                 const qty = sanitizeInt(getValue(row, 'quantity'));
-
-                // Skip empty rows or header rows that don't look like data
-                // Simple heuristic: if qty is not a number, skip
                 if (!name || !batch || qty === null) continue;
 
                 let pid = productIdMap.get(name);
                 if (!pid) {
+                    // New Product -> Bind to current store if isolation implies it?
+                    // The prompt says "When in Store A ... input data MUST be strictly bound to Store A".
+                    // This implies the product definition is also private to Store A?
+                    // Or implies the relationship.
+                    // For safety, let's bind it to targetStoreId to prevent leakage.
                     pid = crypto.randomUUID();
-                    productIdMap.set(name, pid);
+                    productIdMap.set(name, pid); // update map for subsequent rows
                     
                     productsToUpsert.push({
                         id: pid,
@@ -153,7 +158,8 @@ export const Import: React.FC = () => {
                         category: sanitizeStr(getValue(row, 'category')),
                         unit_name: sanitizeStr(getValue(row, 'unit')) || '件',
                         split_unit_name: sanitizeStr(getValue(row, 'split_unit')),
-                        split_ratio: sanitizeInt(getValue(row, 'ratio')) || DEFAULT_IMPORT_RATIO
+                        split_ratio: sanitizeInt(getValue(row, 'ratio')) || DEFAULT_IMPORT_RATIO,
+                        bound_store_id: targetStoreId // Strict Binding
                     });
                 }
 
@@ -161,7 +167,7 @@ export const Import: React.FC = () => {
                 batchesToInsert.push({
                     id: batchId,
                     product_id: pid,
-                    store_id: storeId,
+                    store_id: targetStoreId,
                     batch_number: batch,
                     quantity: qty,
                     expiry_date: getValue(row, 'expiry') ? new Date(getValue(row, 'expiry')).toISOString() : null
@@ -171,7 +177,7 @@ export const Import: React.FC = () => {
                     id: crypto.randomUUID(),
                     type: 'IMPORT',
                     product_id: pid,
-                    store_id: storeId,
+                    store_id: targetStoreId,
                     batch_id: batchId,
                     quantity: qty,
                     balance_after: qty,
@@ -185,14 +191,15 @@ export const Import: React.FC = () => {
 
             if (productsToUpsert.length > 0) {
                  const unique = Array.from(new Map(productsToUpsert.map(p => [p.name, p])).values());
-                 await client.from('products').upsert(unique, { onConflict: 'name' });
+                 await client.from('products').upsert(unique, { onConflict: 'name,bound_store_id' as any });
             }
             if (batchesToInsert.length > 0) {
                 await client.from('batches').insert(batchesToInsert);
                 await client.from('transactions').insert(txToInsert);
             }
 
-            addLog(`✅ 成功导入 ${success} 条数据`);
+            addLog(`✅ 成功导入 ${success} 条数据 到门店: ${availableStores.find(s=>s.id===targetStoreId)?.name}`);
+            dataService.logClientAction('EXCEL_IMPORT', { count: success, storeId: targetStoreId });
             setTimeout(() => { setStep(1); setFileData([]); }, 2000);
 
         } catch (e: any) {
@@ -204,16 +211,19 @@ export const Import: React.FC = () => {
     // --- MANUAL HANDLERS ---
     const handleManualSubmit = async () => {
         if (!manualForm.name || !manualForm.batch_number || !manualForm.quantity) {
-            return alert("请填写必填项: 名称, 批号, 数量");
+            return alert("请填写必填项");
         }
+        if (!targetStoreId) return alert("请选择目标门店");
+
         const client = getSupabaseClient();
         if (!client) return;
         
         try {
-             const storeId = (await dataService.getStores())[0]?.id || 'store_1';
-             
-             // Check product
-             let { data: product } = await client.from('products').select('*').eq('name', manualForm.name).single();
+             // Isolation check
+             let { data: product } = await client.from('products').select('*')
+                .eq('name', manualForm.name)
+                .or(`bound_store_id.is.null,bound_store_id.eq.${targetStoreId}`)
+                .single();
              
              if (!product) {
                  const { data: newProd, error } = await client.from('products').insert({
@@ -223,7 +233,8 @@ export const Import: React.FC = () => {
                      category: sanitizeStr(manualForm.category),
                      unit_name: manualForm.unit_name,
                      split_unit_name: sanitizeStr(manualForm.split_unit_name),
-                     split_ratio: manualForm.split_ratio
+                     split_ratio: manualForm.split_ratio,
+                     bound_store_id: targetStoreId // Bind
                  }).select().single();
                  if (error) throw error;
                  product = newProd;
@@ -235,7 +246,7 @@ export const Import: React.FC = () => {
              await client.from('batches').insert({
                  id: batchId,
                  product_id: product.id,
-                 store_id: storeId,
+                 store_id: targetStoreId,
                  batch_number: manualForm.batch_number,
                  quantity: qty,
                  expiry_date: manualForm.expiry_date ? new Date(manualForm.expiry_date).toISOString() : null
@@ -245,7 +256,7 @@ export const Import: React.FC = () => {
                  id: crypto.randomUUID(),
                  type: 'IMPORT',
                  product_id: product.id,
-                 store_id: storeId,
+                 store_id: targetStoreId,
                  batch_id: batchId,
                  quantity: qty,
                  balance_after: qty,
@@ -254,6 +265,7 @@ export const Import: React.FC = () => {
                  operator: user?.username || 'Manual'
              });
 
+             await dataService.logClientAction('MANUAL_IMPORT', { product: manualForm.name, storeId: targetStoreId });
              alert("导入成功");
              setManualForm({
                 name: '', sku: '', category: '', 
@@ -268,9 +280,15 @@ export const Import: React.FC = () => {
         <div className="p-8 max-w-6xl mx-auto dark:text-gray-100">
              <div className="flex justify-between items-center mb-6">
                  <h1 className="text-2xl font-bold text-gray-800 dark:text-white">商品导入</h1>
-                 <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
-                     <button onClick={() => setMode('EXCEL')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${mode === 'EXCEL' ? 'bg-white dark:bg-gray-700 shadow text-blue-600' : 'text-gray-500'}`}>Excel 批量导入</button>
-                     <button onClick={() => setMode('MANUAL')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${mode === 'MANUAL' ? 'bg-white dark:bg-gray-700 shadow text-blue-600' : 'text-gray-500'}`}>手动录入</button>
+                 
+                 <div className="flex items-center gap-4">
+                     <select className="border p-2 rounded dark:bg-gray-800" value={targetStoreId} onChange={e=>setTargetStoreId(e.target.value)}>
+                         {availableStores.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}
+                     </select>
+                     <div className="flex bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
+                         <button onClick={() => setMode('EXCEL')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${mode === 'EXCEL' ? 'bg-white dark:bg-gray-700 shadow text-blue-600' : 'text-gray-500'}`}>Excel 批量导入</button>
+                         <button onClick={() => setMode('MANUAL')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${mode === 'MANUAL' ? 'bg-white dark:bg-gray-700 shadow text-blue-600' : 'text-gray-500'}`}>手动录入</button>
+                     </div>
                  </div>
              </div>
              
@@ -306,7 +324,7 @@ export const Import: React.FC = () => {
                                 ))}
                             </div>
                             
-                            <h4 className="font-bold mb-2 text-sm text-gray-500">数据预览 (前 5 行) - 请对照下方数据选择上方的 F 列</h4>
+                            <h4 className="font-bold mb-2 text-sm text-gray-500">数据预览 (前 5 行)</h4>
                             <div className="overflow-x-auto border rounded dark:border-gray-700 mb-6">
                                 <table className="w-full text-xs text-left whitespace-nowrap">
                                     <thead className="bg-gray-100 dark:bg-gray-800 font-mono">

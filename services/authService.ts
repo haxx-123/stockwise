@@ -6,8 +6,10 @@ export const DEFAULT_PERMISSIONS: UserPermissions = {
     logs_level: 'C',
     announcement_rule: 'VIEW',
     store_scope: 'LIMITED',
-    delete_mode: 'SOFT',
-    show_excel: false
+    show_excel: false,
+    view_peers: false,
+    view_self_in_list: true,
+    hide_perm_page: false
 };
 
 // Initial Admin Account
@@ -20,8 +22,10 @@ export const DEFAULT_ADMIN: User = {
         logs_level: 'A',
         announcement_rule: 'PUBLISH',
         store_scope: 'GLOBAL',
-        delete_mode: 'HARD',
-        show_excel: true
+        show_excel: true,
+        view_peers: true,
+        view_self_in_list: true,
+        hide_perm_page: false
     },
     allowed_store_ids: []
 };
@@ -47,23 +51,22 @@ class AuthService {
         // 1. Check Hardcoded Super Admin
         if (username === '管理员' && passwordInput === 'ss631204') {
             this.currentUser = DEFAULT_ADMIN;
-            const sessionUser = { ...DEFAULT_ADMIN, password: '' }; 
-            sessionStorage.setItem(this.SESSION_KEY, JSON.stringify(sessionUser));
+            this.setSession(this.currentUser);
             return true;
         }
 
         // 2. Check DB Users
         try {
-            const users = await dataService.getUsers();
+            const users = await dataService.getUsers(); // Includes archived? No.
             const user = users.find(u => u.username === username && u.password === passwordInput);
             
             if (user) {
-                // Ensure permissions object exists (migration safety)
+                // Ensure permissions object exists
                 if (!user.permissions) user.permissions = DEFAULT_PERMISSIONS;
                 
                 this.currentUser = user;
-                const sessionUser = { ...user, password: '' };
-                sessionStorage.setItem(this.SESSION_KEY, JSON.stringify(sessionUser));
+                this.setSession(user);
+                await dataService.logClientAction('LOGIN', { username });
                 return true;
             }
         } catch (e) {
@@ -73,39 +76,41 @@ class AuthService {
         return false;
     }
 
+    setSession(user: User) {
+        const sessionUser = { ...user, password: '' };
+        sessionStorage.setItem(this.SESSION_KEY, JSON.stringify(sessionUser));
+        this.currentUser = user;
+    }
+
+    async switchAccount(targetUser: User) {
+        // Switch to a lower level user without password if we are higher level?
+        // Or just login as them?
+        // Prompt says "Quickly switch to any user with lower permission".
+        // Assuming implicit trust for admin -> subordinate switching.
+        this.setSession(targetUser);
+        await dataService.logClientAction('SWITCH_ACCOUNT', { target: targetUser.username });
+        window.location.reload();
+    }
+
     logout() {
+        if (this.currentUser) dataService.logClientAction('LOGOUT', { username: this.currentUser.username });
         this.currentUser = null;
         sessionStorage.removeItem(this.SESSION_KEY);
         window.location.reload();
     }
 
-    // Strict Hierarchy: Current < Target
-    canManageUser(targetLevel: RoleLevel): boolean {
-        if (!this.currentUser) return false;
-        return this.currentUser.role_level < targetLevel;
-    }
-
-    // Permission Accessors based on Matrix
     get permissions() {
         const p = this.currentUser?.permissions || DEFAULT_PERMISSIONS;
         return {
-            // Logs
             can_see_system_logs: p.logs_level === 'A',
             can_see_subordinate_logs: p.logs_level === 'A' || p.logs_level === 'B',
-            can_undo: true, // Controlled by logs level in logic
-            
-            // Announcements
             can_publish_announcements: p.announcement_rule === 'PUBLISH',
-            
-            // Stores
             is_global_store: p.store_scope === 'GLOBAL',
-            
-            // Delete
-            can_hard_delete: p.delete_mode === 'HARD',
-            
-            // UI
+            // Always Soft Delete
+            can_hard_delete: false, 
             can_export_excel: p.show_excel,
-            has_settings_page: true // Everyone has settings, but content differs
+            has_perm_page: !p.hide_perm_page,
+            can_view_peers: p.view_peers
         };
     }
 }

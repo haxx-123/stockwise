@@ -7,9 +7,10 @@ interface SidebarProps {
   currentPage: string;
   onNavigate: (page: string) => void;
   currentStore: string;
+  hasUnread?: boolean;
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, currentStore }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, currentStore, hasUnread }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const user = authService.getCurrentUser();
@@ -28,12 +29,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
     { id: 'logs', label: '操作日志', icon: Icons.Sparkles },
   ];
 
-  if (currentStore === 'all') {
-      // Audit only for Level 00/01? Or System Log Viewer (Level A)?
-      // Req: "Logs Level A: View System Audit Logs". 
-      if (perms.can_see_system_logs) {
-          menuItems.push({ id: 'audit', label: '审计大厅', icon: Icons.AlertTriangle });
-      }
+  if (currentStore === 'all' && perms.can_see_system_logs) {
+      menuItems.push({ id: 'audit', label: '审计大厅', icon: Icons.AlertTriangle });
   }
 
   const NavButton = ({ item, isMobile }: any) => {
@@ -41,7 +38,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
     return (
         <button
           onClick={() => onNavigate(item.id)}
-          className={`flex items-center justify-center ${isMobile ? 'flex-col space-y-1 p-2 w-full' : 'w-full space-x-3 px-4 py-3 rounded-lg'} transition-all duration-200 ${
+          className={`relative flex items-center justify-center ${isMobile ? 'flex-col space-y-1 p-2 w-full' : 'w-full space-x-3 px-4 py-3 rounded-lg'} transition-all duration-200 ${
             isActive
               ? 'text-blue-600 dark:text-blue-400 font-bold bg-blue-50 dark:bg-gray-800'
               : 'text-gray-600 dark:text-gray-400 hover:bg-gray-50 dark:hover:bg-gray-800'
@@ -53,19 +50,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
     );
   };
 
-  // --- MOBILE BOTTOM NAVIGATION ---
   if (isMobile) {
       return (
-          <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 z-50 px-2 pb-safe shadow-lg">
-             <div className="flex justify-between items-end">
+          <div className="fixed bottom-0 left-0 right-0 bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-800 z-50 px-2 pb-safe shadow-lg h-16">
+             <div className="flex justify-between items-center h-full">
                 {menuItems.slice(0, 4).map(item => <NavButton key={item.id} item={item} isMobile={true} />)}
                 
                 <div className="relative w-full">
                      {settingsOpen && (
-                        <div className="absolute bottom-14 right-2 bg-white dark:bg-gray-900 border dark:border-gray-700 rounded-xl shadow-2xl p-2 w-40 flex flex-col gap-2 mb-2 animate-fade-in-up">
+                        <div className="absolute bottom-16 right-2 bg-white dark:bg-gray-900 border dark:border-gray-700 rounded-xl shadow-2xl p-2 w-40 flex flex-col gap-2 mb-2 animate-fade-in-up">
                             <button onClick={()=>{onNavigate(`settings-config`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">连接配置</button>
                             <button onClick={()=>{onNavigate(`settings-account`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">账户设置</button>
-                            <button onClick={()=>{onNavigate(`settings-perms`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">权限设置</button>
+                            {perms.has_perm_page && <button onClick={()=>{onNavigate(`settings-perms`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">权限设置</button>}
                             <button onClick={()=>{onNavigate(`settings-theme`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">应用主题</button>
                         </div>
                      )}
@@ -79,9 +75,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
       );
   }
 
-  // --- DESKTOP SIDEBAR ---
   return (
-    <div className="w-64 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 h-screen flex flex-col fixed left-0 top-0 z-20 shadow-sm transition-colors duration-300">
+    <div className="w-64 bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 h-full flex flex-col shrink-0 shadow-sm transition-colors duration-300">
       <div className="p-6 flex items-center space-x-2 border-b border-gray-100 dark:border-gray-800">
         <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center text-white shadow-blue-200 dark:shadow-none shadow-lg">
           <Icons.Box size={20} />
@@ -109,7 +104,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
                 <div className="pl-12 space-y-1 mt-1 animate-fade-in border-l dark:border-gray-800 ml-6">
                     <button onClick={() => onNavigate('settings-config')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-config' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>连接配置</button>
                     <button onClick={() => onNavigate('settings-account')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-account' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>账户设置</button>
-                    <button onClick={() => onNavigate('settings-perms')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-perms' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>权限设置</button>
+                    {perms.has_perm_page && <button onClick={() => onNavigate('settings-perms')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-perms' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>权限设置</button>}
                     <button onClick={() => onNavigate('settings-theme')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-theme' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>应用主题</button>
                 </div>
             )}
