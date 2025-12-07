@@ -62,15 +62,24 @@ export type AuditLog = {
   timestamp: string;
 };
 
-// 0: Admin (00), 1: Owner (01), 2: Staff (02)
-export type RoleLevel = 0 | 1 | 2;
+// 0-9: Lower is higher power. 00 is Admin.
+export type RoleLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
+
+export interface UserPermissions {
+    logs_level: 'A' | 'B' | 'C'; // A: System, B: Lower Level, C: Self
+    announcement_rule: 'PUBLISH' | 'VIEW';
+    store_scope: 'GLOBAL' | 'LIMITED';
+    delete_mode: 'HARD' | 'SOFT';
+    show_excel: boolean;
+}
 
 export type User = {
   id: string;
   username: string;
   password?: string; 
-  role_level: RoleLevel; // Integer based hierarchy
-  default_store_id?: string;
+  role_level: RoleLevel; 
+  permissions: UserPermissions;
+  allowed_store_ids: string[]; // For LIMITED scope
 };
 
 export type Announcement = {

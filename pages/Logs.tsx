@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { Transaction } from '../types';
 import { Icons } from '../components/Icons';
+import { authService } from '../services/authService';
 
 export const Logs: React.FC = () => {
     const [logs, setLogs] = useState<Transaction[]>([]);
@@ -14,7 +15,7 @@ export const Logs: React.FC = () => {
     // Pagination
     const [page, setPage] = useState(1);
     const PAGE_SIZE = 15;
-    const [inputPage, setInputPage] = useState(1); // Local state for input
+    const [inputPage, setInputPage] = useState(1);
 
     useEffect(() => {
         loadLogs();
@@ -29,6 +30,7 @@ export const Logs: React.FC = () => {
     const loadLogs = async () => {
         try {
             const date = startDate ? new Date(startDate).toISOString() : undefined;
+            // The dataService.getTransactions now handles Log Level A/B/C logic internally
             const data = await dataService.getTransactions(filter, 200, date);
             setLogs(data);
         } catch(e) { console.error(e); }
@@ -42,7 +44,6 @@ export const Logs: React.FC = () => {
         } catch(e: any) { alert(e.message || "撤销失败"); }
     };
 
-    // Filter Logic
     const filteredLogs = logs.filter(log => {
         if (searchQuery) {
             const q = searchQuery.toLowerCase();
@@ -84,9 +85,8 @@ export const Logs: React.FC = () => {
     };
 
     const renderDetails = (log: Transaction) => {
-        // CASE C: DELETE
         if (log.type === 'DELETE') {
-            const batchCount = log.snapshot_data?.deleted_batch ? 1 : 'X'; // Simplification
+            const batchCount = log.snapshot_data?.deleted_batch ? 1 : 'X';
             return (
                 <div>
                     <div className="text-sm font-medium text-red-600 dark:text-red-400">删除了 {log.product?.name || '未知商品'}</div>
@@ -94,7 +94,6 @@ export const Logs: React.FC = () => {
                 </div>
             );
         }
-        // CASE B: ADJUST
         if (log.type === 'ADJUST') {
             const updates = log.snapshot_data?.updates || {};
             const keys = Object.keys(updates);
@@ -112,7 +111,6 @@ export const Logs: React.FC = () => {
                 </div>
             );
         }
-        // CASE A: NORMAL
         return (
             <div>
                 <div className="text-sm font-medium text-gray-900 dark:text-white">{log.product?.name || '未知商品'}</div>
@@ -123,7 +121,7 @@ export const Logs: React.FC = () => {
 
     const renderQty = (log: Transaction) => {
         if (log.type === 'ADJUST' && log.quantity === 0) return <span className="text-gray-400">-</span>;
-        if (log.type === 'DELETE') return <span className="text-gray-400">-</span>; // Usually qty is 0 or irrelevant for delete log row itself
+        if (log.type === 'DELETE') return <span className="text-gray-400">-</span>; 
         const sign = (log.type === 'OUT') ? '-' : '+';
         return <span>{sign}{Math.abs(log.quantity)}</span>;
     };
@@ -211,7 +209,7 @@ export const Logs: React.FC = () => {
                             </tr>
                         ))}
                         {paginatedLogs.length === 0 && (
-                            <tr><td colSpan={6} className="p-8 text-center text-gray-400">暂无日志</td></tr>
+                            <tr><td colSpan={6} className="p-8 text-center text-gray-400">暂无可见日志</td></tr>
                         )}
                     </tbody>
                 </table>

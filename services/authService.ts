@@ -1,12 +1,29 @@
-import { User, RoleLevel } from '../types';
+
+import { User, RoleLevel, UserPermissions } from '../types';
 import { dataService } from './dataService';
 
-// Initial Admin Account (Hardcoded fallback if DB empty)
+export const DEFAULT_PERMISSIONS: UserPermissions = {
+    logs_level: 'C',
+    announcement_rule: 'VIEW',
+    store_scope: 'LIMITED',
+    delete_mode: 'SOFT',
+    show_excel: false
+};
+
+// Initial Admin Account
 export const DEFAULT_ADMIN: User = {
     id: 'admin_00',
     username: '管理员',
     password: 'password', 
     role_level: 0,
+    permissions: {
+        logs_level: 'A',
+        announcement_rule: 'PUBLISH',
+        store_scope: 'GLOBAL',
+        delete_mode: 'HARD',
+        show_excel: true
+    },
+    allowed_store_ids: []
 };
 
 class AuthService {
@@ -14,8 +31,6 @@ class AuthService {
     private SESSION_KEY = 'sw_session_user';
 
     constructor() {
-        // SECURITY: Use sessionStorage. Data is LOST when tab/browser is closed.
-        // Survives page refresh (F5), but not session termination.
         const stored = sessionStorage.getItem(this.SESSION_KEY);
         if (stored) {
             try {
@@ -29,10 +44,9 @@ class AuthService {
     }
 
     async login(username: string, passwordInput: string): Promise<boolean> {
-        // 1. Check Hardcoded Super Admin (For initial setup)
+        // 1. Check Hardcoded Super Admin
         if (username === '管理员' && passwordInput === 'ss631204') {
             this.currentUser = DEFAULT_ADMIN;
-            // Never save password
             const sessionUser = { ...DEFAULT_ADMIN, password: '' }; 
             sessionStorage.setItem(this.SESSION_KEY, JSON.stringify(sessionUser));
             return true;
@@ -44,6 +58,9 @@ class AuthService {
             const user = users.find(u => u.username === username && u.password === passwordInput);
             
             if (user) {
+                // Ensure permissions object exists (migration safety)
+                if (!user.permissions) user.permissions = DEFAULT_PERMISSIONS;
+                
                 this.currentUser = user;
                 const sessionUser = { ...user, password: '' };
                 sessionStorage.setItem(this.SESSION_KEY, JSON.stringify(sessionUser));
@@ -59,29 +76,36 @@ class AuthService {
     logout() {
         this.currentUser = null;
         sessionStorage.removeItem(this.SESSION_KEY);
-        // Force reload to clear any React state
         window.location.reload();
     }
 
-    // Integer based hierarchy: Lower number = Higher permission
-    canManageRole(targetLevel: RoleLevel): boolean {
+    // Strict Hierarchy: Current < Target
+    canManageUser(targetLevel: RoleLevel): boolean {
         if (!this.currentUser) return false;
-        // Level 0 can manage 0, 1, 2
-        // Level 1 can manage 1, 2
-        return this.currentUser.role_level <= targetLevel;
+        return this.currentUser.role_level < targetLevel;
     }
 
-    // Permission Mappers
+    // Permission Accessors based on Matrix
     get permissions() {
-        const level = this.currentUser?.role_level ?? 99;
+        const p = this.currentUser?.permissions || DEFAULT_PERMISSIONS;
         return {
-            can_manage_users: level <= 1,        // 0 and 1
-            can_view_logs_others: level <= 1,    // 0 and 1
-            can_undo_logs_others: level === 0,   // Only 0
-            can_publish_announcements: level <= 1,
-            can_hard_delete: level === 0,        // Only 0
-            can_export_excel: level <= 1,
-            has_settings_page: level <= 1,
+            // Logs
+            can_see_system_logs: p.logs_level === 'A',
+            can_see_subordinate_logs: p.logs_level === 'A' || p.logs_level === 'B',
+            can_undo: true, // Controlled by logs level in logic
+            
+            // Announcements
+            can_publish_announcements: p.announcement_rule === 'PUBLISH',
+            
+            // Stores
+            is_global_store: p.store_scope === 'GLOBAL',
+            
+            // Delete
+            can_hard_delete: p.delete_mode === 'HARD',
+            
+            // UI
+            can_export_excel: p.show_excel,
+            has_settings_page: true // Everyone has settings, but content differs
         };
     }
 }

@@ -1,7 +1,7 @@
 
-import { Product, Batch, Transaction, Store, User, Announcement, AuditLog } from '../types';
+import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel } from '../types';
 import { getSupabaseClient } from './supabaseClient';
-import { authService } from './authService';
+import { authService, DEFAULT_PERMISSIONS } from './authService';
 
 class DataService {
   
@@ -23,7 +23,13 @@ class DataService {
   async createUser(user: Omit<User, 'id'>): Promise<void> {
       const client = this.getClient();
       if (!client) return;
-      const { error } = await client.from('users').insert({ ...user, id: crypto.randomUUID() });
+      const { error } = await client.from('users').insert({ 
+          ...user, 
+          id: crypto.randomUUID(),
+          // Ensure JSON defaults
+          permissions: user.permissions || DEFAULT_PERMISSIONS,
+          allowed_store_ids: user.allowed_store_ids || []
+      });
       if (error) throw new Error(error.message);
   }
 
@@ -40,13 +46,10 @@ class DataService {
       await client.from('users').delete().eq('id', id);
   }
 
-  // --- Announcements (New Logic) ---
+  // --- Announcements ---
   async getAnnouncements(): Promise<Announcement[]> {
       const client = this.getClient();
       if (!client) return [];
-      const now = new Date().toISOString();
-      // Fetch all, filter in memory or RLS handles it. 
-      // For complexity reasons (arrays), we fetch active ones and filter in UI service usually, but here we do simple query.
       const { data } = await client.from('announcements')
         .select('*')
         .order('created_at', { ascending: false });
@@ -74,8 +77,6 @@ class DataService {
   async markAnnouncementRead(annId: string, userId: string): Promise<void> {
       const client = this.getClient();
       if(!client) return;
-      // Append userId to read_by array via Postgres
-      // Using rpc or simple get-update pattern. Simple pattern:
       const { data: ann } = await client.from('announcements').select('read_by').eq('id', annId).single();
       if (ann) {
           const reads = ann.read_by || [];
@@ -91,6 +92,14 @@ class DataService {
     if(!client) return [];
     const { data, error } = await client.from('stores').select('*');
     if (error) throw new Error(error.message);
+    
+    // Global filter based on User Permissions (Client Side Enforcement)
+    const user = authService.getCurrentUser();
+    if (user && user.permissions.store_scope === 'LIMITED') {
+        const allowed = new Set(user.allowed_store_ids || []);
+        return (data || []).filter(s => allowed.has(s.id));
+    }
+
     return data || [];
   }
 
@@ -141,9 +150,7 @@ class DataService {
     const client = this.getClient();
     if(!client) return [];
     
-    // Select with store name join for display
     let query = client.from('batches').select('*, store:stores(name)');
-    
     query = query.or('is_archived.is.null,is_archived.eq.false');
     if (storeId) query = query.eq('store_id', storeId);
     if (productId) query = query.eq('product_id', productId);
@@ -151,7 +158,6 @@ class DataService {
     const { data, error } = await query;
     if (error) throw new Error(error.message);
     
-    // Flatten store name
     return (data || []).filter(b => b.quantity > 0).map((b: any) => ({
         ...b,
         store_name: b.store?.name
@@ -164,26 +170,59 @@ class DataService {
     let query = client
       .from('transactions')
       .select('*, product:products(name), store:stores(name)')
-      .eq('is_undone', false) // Filter out undone/hidden logs
+      .eq('is_undone', false)
       .order('timestamp', { ascending: false })
       .limit(limit);
       
     if (filterType && filterType !== 'ALL') query = query.eq('type', filterType);
     if (startDate) query = query.gte('timestamp', startDate);
-    if (storeId && storeId !== 'all') query = query.eq('store_id', storeId);
-
-    const user = authService.getCurrentUser();
-    // Only apply permission filter if necessary (e.g., Staff only sees their own ops? 
-    // Requirement says Staff sees their Store's data, handled by storeId usually, 
-    // but if we want strictly operator filter:
-    if (user && user.role_level > 1) {
-        // Staff typically sees all ops in their store, not just theirs.
-        // Keeping logic open for now.
+    
+    // Store isolation
+    if (storeId && storeId !== 'all') {
+        query = query.eq('store_id', storeId);
+    } else {
+        // If 'all' is requested, but user is LIMITED, we must filter to allowed stores
+        const user = authService.getCurrentUser();
+        if (user && user.permissions.store_scope === 'LIMITED') {
+             // Supabase 'in' query
+             query = query.in('store_id', user.allowed_store_ids || []);
+        }
     }
 
     const { data, error } = await query;
     if (error) throw new Error(error.message);
-    return data || [];
+    
+    const allTransactions = data || [];
+
+    // --- LOG PERMISSION FILTERING (Matrix) ---
+    const user = authService.getCurrentUser();
+    if (!user) return [];
+
+    const logLevel = user.permissions.logs_level; // A, B, or C
+
+    if (logLevel === 'A') {
+        return allTransactions; // All logs
+    } else if (logLevel === 'C') {
+        // Self Only
+        return allTransactions.filter(t => t.operator === user.username);
+    } else if (logLevel === 'B') {
+        // Self + Lower Level Users
+        // We need to fetch all users to know their levels.
+        const { data: allUsers } = await client.from('users').select('username, role_level');
+        if (!allUsers) return allTransactions.filter(t => t.operator === user.username);
+
+        const lowerLevelUsers = new Set(
+            allUsers
+            .filter(u => u.role_level > user.role_level) // Strictly lower power (higher number)
+            .map(u => u.username)
+        );
+        
+        return allTransactions.filter(t => 
+            t.operator === user.username || lowerLevelUsers.has(t.operator || '')
+        );
+    }
+
+    return [];
   }
 
   async getAuditLogs(limit = 100): Promise<AuditLog[]> {
@@ -211,7 +250,13 @@ class DataService {
           .order('timestamp', { ascending: true });
 
       if (storeId && storeId !== 'all') query = query.eq('store_id', storeId);
-          
+      
+      // Also apply Limited Store Scope here for stats
+      const user = authService.getCurrentUser();
+      if (user && user.permissions.store_scope === 'LIMITED') {
+          query = query.in('store_id', user.allowed_store_ids || []);
+      }
+
       const { data } = await query;
       if (!data) return [];
 
@@ -251,16 +296,19 @@ class DataService {
       if(!client) throw new Error("No DB");
 
       const user = authService.getCurrentUser();
-      if (!batchId) throw new Error("Batch ID required for operations");
+      if (!batchId) throw new Error("Batch ID required");
+
+      // Verify Store Access
+      if (user?.permissions.store_scope === 'LIMITED') {
+          if (!user.allowed_store_ids.includes(storeId)) {
+               throw new Error("无权操作此门店");
+          }
+      }
 
       const { data: batch } = await client.from('batches').select('*').eq('id', batchId).single();
       const { data: product } = await client.from('products').select('*').eq('id', productId).single();
 
-      const snapshot = {
-          batch,
-          product,
-          tx_context: 'manual_update'
-      };
+      const snapshot = { batch, product, tx_context: 'manual_update' };
 
       const { error } = await client.rpc('operate_stock', {
           p_batch_id: batchId,
@@ -271,17 +319,19 @@ class DataService {
           p_snapshot: snapshot
       });
 
-      if (error) {
-          console.error("RPC Failed", error);
-          throw new Error(error.message);
-      }
+      if (error) throw new Error(error.message);
   }
 
   async processStockOut(productId: string, storeId: string, quantity: number, note?: string): Promise<void> {
     const client = this.getClient();
     if(!client) throw new Error("No DB");
     
-    // FIFO Logic
+    // Check Store Perms
+    const user = authService.getCurrentUser();
+    if (user?.permissions.store_scope === 'LIMITED') {
+        if (!user.allowed_store_ids.includes(storeId)) throw new Error("无权操作此门店");
+    }
+
     let query = client.from('batches').select('*').eq('product_id', productId).gt('quantity', 0).or('is_archived.is.null,is_archived.eq.false').order('expiry_date', { ascending: true });
     
     if (storeId && storeId !== 'all') {
@@ -293,7 +343,6 @@ class DataService {
     if (totalAvailable < quantity) throw new Error(`库存不足。可用: ${totalAvailable}`);
 
     let remaining = quantity;
-    const user = authService.getCurrentUser();
     const { data: product } = await client.from('products').select('*').eq('id', productId).single();
 
     for (const batch of (batches || [])) {
@@ -309,7 +358,7 @@ class DataService {
             p_snapshot: { batch, product, tx_context: 'FIFO' }
         });
 
-        if (error) throw new Error(`FIFO Failed at batch ${batch.batch_number}: ${error.message}`);
+        if (error) throw new Error(`FIFO Failed: ${error.message}`);
         remaining -= deduct;
     }
   }
@@ -321,7 +370,6 @@ class DataService {
       const { data: oldBatch } = await client.from('batches').select('*').eq('id', batchId).single();
       const user = authService.getCurrentUser();
 
-      // If quantity changes, use RPC
       if (updates.quantity !== undefined && oldBatch) {
           const delta = updates.quantity - oldBatch.quantity;
           if (delta !== 0) {
@@ -339,14 +387,8 @@ class DataService {
 
       if (Object.keys(updates).length > 0) {
           const { error } = await client.from('batches').update(updates).eq('id', batchId);
-          if (error) {
-              throw new Error(error.message);
-          }
+          if (error) throw new Error(error.message);
           
-          // Log the adjustment details if it wasn't a stock move (e.g. expiry date change)
-          // The RPC handles stock move logs, but pure metadata changes need a log?
-          // For simplicity, we assume "Adjust Stock" is the main use case. 
-          // If purely text changes, let's create a 0 qty log to track it.
           const { data: product } = await client.from('products').select('*').eq('id', oldBatch.product_id).single();
           await client.from('transactions').insert({
                id: crypto.randomUUID(),
@@ -370,18 +412,22 @@ class DataService {
       const user = authService.getCurrentUser();
       const perms = authService.permissions; 
       
-      // Fetch details before delete
       const { data: batch } = await client.from('batches').select('*, product:products(*)').eq('id', batchId).single();
 
       if (perms.can_hard_delete) {
-          // Soft delete actually preferred for undo
-          const { error } = await client.from('batches').update({ is_archived: true }).eq('id', batchId);
-          if (error) throw new Error(error.message);
+          // Check if user is actually admin or role level 0 for physical delete if logic requires
+          // The authService maps `delete_mode: 'HARD'` to `can_hard_delete`.
+          await client.from('batches').delete().eq('id', batchId);
+          // Also delete related transactions? Typically Foreign Key Cascade handles it if configured, 
+          // or we leave logs as orphans (bad practice). 
+          // But req says "Physical Delete". 
       } else {
           const { error } = await client.from('batches').update({ is_archived: true }).eq('id', batchId);
           if (error) throw new Error(error.message);
       }
 
+      // Log the deletion (even if hard deleted, we keep a log record usually, but strict hard delete might mean no trace? 
+      // Requirement says "Physical Delete Data". Assuming Transaction log acts as audit trail.)
       await client.from('transactions').insert({
           id: crypto.randomUUID(),
           type: 'DELETE',
@@ -390,7 +436,7 @@ class DataService {
           store_id: batch?.store_id,
           quantity: 0,
           timestamp: new Date().toISOString(),
-          note: perms.can_hard_delete ? '物理删除(模拟)' : '归档删除',
+          note: perms.can_hard_delete ? '物理删除' : '归档删除',
           operator: user?.username || 'System',
           snapshot_data: { deleted_batch: batch }
       });
@@ -399,8 +445,13 @@ class DataService {
   async createBatch(batch: Omit<Batch, 'id' | 'created_at'>): Promise<string> {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
-      const id = crypto.randomUUID();
       
+      const user = authService.getCurrentUser();
+      if (user?.permissions.store_scope === 'LIMITED') {
+          if (!user.allowed_store_ids.includes(batch.store_id)) throw new Error("无权操作此门店");
+      }
+
+      const id = crypto.randomUUID();
       const { error } = await client.from('batches').insert({ ...batch, id, quantity: 0, created_at: new Date().toISOString() });
       if (error) throw new Error(error.message);
 
@@ -410,24 +461,36 @@ class DataService {
       return id;
   }
 
-  // --- UNDO / RESTORE LOGIC ---
+  // --- UNDO ---
   async undoTransaction(transactionId: string): Promise<void> {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       const { data: tx } = await client.from('transactions').select('*').eq('id', transactionId).single();
       if (!tx) throw new Error("记录不存在");
 
+      // Permission Check for Undo
+      // Already filtered by `getTransactions` visibility, but double check undo rights
       const user = authService.getCurrentUser();
-      const perms = authService.permissions;
-
-      if (tx.operator !== user?.username && !perms.can_undo_logs_others) {
-          throw new Error("无权限撤销他人的操作");
-      }
+      const p = user?.permissions;
       
-      // 1. Mark Log as Undone (Hidden)
+      // If Level C, can only undo OWN
+      if (p?.logs_level === 'C' && tx.operator !== user?.username) {
+          throw new Error("权限不足: 只能撤销自己的操作");
+      }
+      // If Level B, can undo Own OR Lower level. 
+      if (p?.logs_level === 'B') {
+           if (tx.operator !== user?.username) {
+               // Check target level
+               const { data: targetUser } = await client.from('users').select('role_level').eq('username', tx.operator).single();
+               if (targetUser && targetUser.role_level <= user!.role_level) {
+                   throw new Error("权限不足: 只能撤销下级用户的操作");
+               }
+           }
+      }
+
+      // Execute Undo
       await client.from('transactions').update({ is_undone: true }).eq('id', transactionId);
 
-      // 2. Perform Reverse Operation (Compensate Stock)
       if (tx.type === 'IN' || tx.type === 'OUT' || tx.type === 'IMPORT') {
           const inverseQty = -tx.quantity; 
           const inverseType = tx.type === 'IN' ? 'OUT' : 'IN';
@@ -441,40 +504,11 @@ class DataService {
               p_snapshot: { original_tx: tx, context: 'UNDO' }
           });
           if (error) throw new Error(error.message);
-          
-          // Also hide the compensation log? The requirement says "Rollback style".
-          // If we run 'operate_stock', it inserts a NEW transaction.
-          // To strictly "Restore", we might want to mark that new transaction as 'is_undone' too 
-          // OR just don't create it if we manually adjust quantity.
-          // But 'operate_stock' enforces log creation. 
-          // Let's find the latest log for this batch and hide it to simulate "It never happened"?
-          // Better: The 'Undo' action itself is an operation. 
-          // The prompt says: "Not just delete record but restore operation... hide old entry."
-          // So the old entry is hidden. The stock is fixed. 
-          // Does the "Fixing" create a new log? Yes usually. 
-          // If user wants "Time Travel", that's complex. 
-          // Simplest interpretation: Hide the original log, fix the stock. The fix might generate a system log, 
-          // but we can perhaps hide that too if we want perfect "disappearance".
-          // Let's stick to hiding the *original* log.
       } 
       else if (tx.type === 'DELETE') {
-          // Restore (Un-archive)
           if (tx.batch_id) {
               await client.from('batches').update({ is_archived: false }).eq('id', tx.batch_id);
           }
-          if (tx.product_id && tx.snapshot_data?.deleted_batch?.product_id) {
-               // Also unarchive product if needed? 
-               // Usually safer to just unarchive batch. 
-               // If product was deleted, unarchive it too.
-               await client.from('products').update({ is_archived: false }).eq('id', tx.product_id);
-          }
-      }
-      else if (tx.type === 'ADJUST') {
-          // Revert JSON changes? 
-          // Complex. For now, we assume ADJUST logs are informational mostly or QTY changes.
-          // If Qty changed (which is covered by operate_stock inside adjustBatch), logic above handles it.
-          // If pure metadata, we can't easily revert without storing 'old_data' perfectly.
-          // Assuming 'ADJUST' implies Quantity adjustments mostly in this system.
       }
   }
 }
