@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig } from '../services/supabaseClient';
 import { authService } from '../services/authService';
@@ -126,20 +127,24 @@ create table transactions (
   timestamp timestamp with time zone default now(),
   note text,
   operator text,
-  snapshot_data jsonb
+  snapshot_data jsonb,
+  is_undone boolean default false
 );
 
--- 6. Announcements
+-- 6. Announcements (New Structure)
 create table announcements (
   id text primary key default gen_random_uuid(),
   title text not null,
   content text,
   creator text,
-  audience_role text default 'ALL',
+  creator_id text,
+  target_users text[], -- Array of user IDs
   valid_until timestamp with time zone,
-  popup_frequency text,
-  created_at timestamp with time zone default now(),
-  is_deleted boolean default false
+  popup_config jsonb, -- { enabled, duration }
+  allow_delete boolean default true,
+  is_force_deleted boolean default false,
+  read_by text[] default '{}',
+  created_at timestamp with time zone default now()
 );
 
 -- 7. Audit Logs (System Level)
@@ -257,6 +262,12 @@ insert into stores (name) values ('默认总店');
                     
                     <hr className="my-6 border-gray-200 dark:border-gray-700"/>
                     <h3 className="text-lg font-bold text-gray-800 dark:text-white mb-2">SQL 初始化脚本 (必须运行)</h3>
+                    
+                    <div className="text-sm font-bold text-gray-800 dark:text-gray-200 mb-2 space-y-1">
+                        <p>SQL是/否较上一次发生更改: <span className="text-blue-600">是</span></p>
+                        <p>SQL是/否必须包含重置数据库: <span className="text-red-600">是</span></p>
+                    </div>
+
                     <div className="relative">
                         <pre className="bg-gray-950 text-gray-300 p-4 rounded-lg h-48 overflow-auto text-xs font-mono custom-scrollbar border border-gray-700">{sqlScript}</pre>
                         <button onClick={() => navigator.clipboard.writeText(sqlScript)} className="absolute top-2 right-2 text-xs bg-white/20 text-white px-2 py-1 rounded hover:bg-white/30">复制</button>
@@ -266,6 +277,7 @@ insert into stores (name) values ('默认总店');
         );
     }
     
+    // ... (Rest of component remains same) ...
     if (subPage === 'theme') {
         return (
             <div className="p-8 max-w-4xl mx-auto dark:text-gray-100">

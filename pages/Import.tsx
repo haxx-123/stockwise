@@ -1,4 +1,5 @@
-import React, { useState } from 'react';
+
+import React, { useState, useRef, useEffect } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
 import { isConfigured, getSupabaseClient } from '../services/supabaseClient';
@@ -6,6 +7,7 @@ import { sanitizeInt, sanitizeStr, DEFAULT_IMPORT_RATIO } from '../utils/formatt
 import { authService } from '../services/authService';
 
 declare const window: any;
+declare const Html5Qrcode: any;
 
 export const Import: React.FC = () => {
     const [mode, setMode] = useState<'EXCEL' | 'MANUAL'>('EXCEL');
@@ -24,6 +26,9 @@ export const Import: React.FC = () => {
         batch_number: '', quantity: 0, expiry_date: ''
     });
 
+    const [isScanning, setIsScanning] = useState(false);
+    const scannerRef = useRef<any>(null);
+
     const FIELD_LABELS: Record<string, string> = {
         name: '商品名称', batch: '批号', quantity: '数量',
         sku: 'SKU', category: '类别', 
@@ -33,6 +38,38 @@ export const Import: React.FC = () => {
 
     const addLog = (msg: string) => setLogs(prev => [`[${new Date().toLocaleTimeString()}] ${msg}`, ...prev]);
     const user = authService.getCurrentUser();
+
+    // --- SCANNER ---
+    const startScanner = async () => {
+        if (window.location.protocol !== 'https:' && window.location.hostname !== 'localhost') {
+            return alert("安全限制：摄像头只能在 HTTPS 或 localhost 下使用。");
+        }
+        if (isScanning) return;
+        try {
+            const html5QrCode = new Html5Qrcode("import-reader");
+            scannerRef.current = html5QrCode;
+            setIsScanning(true);
+            const config = { fps: 10, qrbox: { width: 250, height: 150 }, aspectRatio: 1.0 };
+            await html5QrCode.start({ facingMode: "environment" }, config, (decodedText: string) => {
+                setManualForm(prev => ({ ...prev, batch_number: decodedText }));
+                stopScanner();
+            }, () => {});
+        } catch (err: any) {
+            setIsScanning(false);
+            alert(`相机启动失败: ${err.message}`);
+        }
+    };
+
+    const stopScanner = async () => {
+        if (scannerRef.current) {
+            try { await scannerRef.current.stop(); await scannerRef.current.clear(); } catch(e){}
+            scannerRef.current = null;
+        }
+        setIsScanning(false);
+    };
+
+    useEffect(() => () => { if(scannerRef.current) stopScanner(); }, []);
+
 
     // --- EXCEL HANDLERS ---
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -337,9 +374,14 @@ export const Import: React.FC = () => {
                                  <input type="number" className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600" value={manualForm.split_ratio} onChange={e => setManualForm({...manualForm, split_ratio: Number(e.target.value)})} />
                              </div>
                          </div>
-                         <div>
+                         <div className="relative">
                              <label className="text-sm font-bold text-red-500">批号 *</label>
-                             <input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600" value={manualForm.batch_number} onChange={e => setManualForm({...manualForm, batch_number: e.target.value})} />
+                             <div className="flex">
+                                <input className="w-full border p-2 rounded-l dark:bg-gray-800 dark:border-gray-600" value={manualForm.batch_number} onChange={e => setManualForm({...manualForm, batch_number: e.target.value})} />
+                                <button onClick={startScanner} className="bg-gray-200 dark:bg-gray-700 px-3 rounded-r border border-l-0 dark:border-gray-600">
+                                    <Icons.Store size={18} />
+                                </button>
+                             </div>
                          </div>
                          <div>
                              <label className="text-sm font-bold text-red-500">数量 *</label>
@@ -350,6 +392,12 @@ export const Import: React.FC = () => {
                              <input type="date" className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600" value={manualForm.expiry_date} onChange={e => setManualForm({...manualForm, expiry_date: e.target.value})} />
                          </div>
                      </div>
+                     
+                     <div className={`${isScanning ? 'block' : 'hidden'} w-full max-w-sm mx-auto p-2 bg-black rounded-lg mt-4`}>
+                        <div id="import-reader" className="w-full"></div>
+                        <button onClick={stopScanner} className="w-full bg-red-600 text-white mt-2 rounded py-1">停止扫描</button>
+                    </div>
+
                      <div className="mt-8 text-right">
                          <button onClick={handleManualSubmit} className="px-8 py-3 bg-blue-600 text-white rounded font-bold shadow hover:bg-blue-700">保存录入</button>
                      </div>

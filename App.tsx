@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
@@ -10,7 +11,7 @@ import { Operations } from './pages/Operations';
 import { AIInsights } from './pages/AIInsights';
 import { Icons } from './components/Icons';
 import { dataService } from './services/dataService';
-import { Store, Announcement } from './types';
+import { Store, Announcement, User } from './types';
 import { isConfigured } from './services/supabaseClient';
 import { generatePageSummary } from './utils/formatters';
 import { authService } from './services/authService';
@@ -62,63 +63,252 @@ const LoginScreen = ({ onLogin }: any) => {
     );
 };
 
-// ... Announcement Modal ...
+// ... Announcement Modal (Complex 3 Tabs) ...
 const AnnouncementModal = ({ onClose }: any) => {
+    const [activeTab, setActiveTab] = useState<'VIEW' | 'PUBLISH' | 'MANAGE'>('VIEW');
     const [anns, setAnns] = useState<Announcement[]>([]);
+    const [users, setUsers] = useState<User[]>([]);
+    const [expandedAnn, setExpandedAnn] = useState<string | null>(null);
+    const [page, setPage] = useState(1);
+    
+    // Publish State
     const [newTitle, setNewTitle] = useState('');
-    const [newContent, setNewContent] = useState('');
-    const perms = authService.permissions;
+    const [newContent, setNewContent] = useState(''); // Simple HTML
+    const [targetUsers, setTargetUsers] = useState<Set<string>>(new Set());
+    const [popupEnabled, setPopupEnabled] = useState(false);
+    const [popupDuration, setPopupDuration] = useState('ONCE');
+    const [allowDelete, setAllowDelete] = useState(true);
+
+    // Manage State
+    const [manageAccount, setManageAccount] = useState('SELF');
+    const [manageSelection, setManageSelection] = useState<Set<string>>(new Set());
+
     const user = authService.getCurrentUser();
+    const PAGE_SIZE = 5;
 
     useEffect(() => {
         dataService.getAnnouncements().then(setAnns);
+        dataService.getUsers().then(setUsers);
     }, []);
 
-    const publish = async () => {
-        if (!newTitle || !newContent) return;
-        try {
-            const nextWeek = new Date();
-            nextWeek.setDate(nextWeek.getDate() + 7);
-            await dataService.createAnnouncement({
-                title: newTitle,
-                content: newContent,
-                creator: user?.username || 'Sys',
-                audience_role: 'ALL',
-                valid_until: nextWeek.toISOString(),
-                popup_frequency: 'ALWAYS'
-            });
-            setNewTitle('');
-            setNewContent('');
-            dataService.getAnnouncements().then(setAnns);
-        } catch(e: any) { alert(e.message); }
+    const userAnns = anns.filter(a => {
+        // Filter logic for "VIEW" tab:
+        // 1. Not force deleted globally
+        // 2. Targeted to user OR empty target (all)
+        // 3. Not hidden by user (read_by logic used differently, actually we need a 'hidden_by' logic or reuse read_by as 'hidden')
+        // Prompt says: "Delete only hides it". Let's use `read_by` to track if user 'deleted/hid' it.
+        if (a.is_force_deleted) return false;
+        if (a.target_users && a.target_users.length > 0 && !a.target_users.includes(user?.id || '')) return false;
+        if (a.read_by?.includes(user?.id || 'HIDDEN')) return false; // If marked 'HIDDEN'
+        return true;
+    });
+
+    const manageAnns = anns.filter(a => {
+        if (manageAccount === 'SELF') return a.creator === user?.username;
+        const targetUser = users.find(u => u.id === manageAccount);
+        return a.creator === targetUser?.username;
+    });
+
+    const handlePublish = async () => {
+        if (!newTitle || !newContent) return alert("标题和内容必填");
+        await dataService.createAnnouncement({
+            title: newTitle,
+            content: newContent,
+            creator: user?.username,
+            creator_id: user?.id,
+            target_users: Array.from(targetUsers),
+            valid_until: new Date(Date.now() + 86400000 * 365).toISOString(), // Default 1 year validity
+            popup_config: { enabled: popupEnabled, duration: popupDuration },
+            allow_delete: allowDelete
+        });
+        alert("发布成功");
+        setNewTitle(''); setNewContent(''); 
+        dataService.getAnnouncements().then(setAnns);
+    };
+
+    const handleHide = async (ids: string[]) => {
+        // For View Tab: Hide from myself
+        const client = (dataService as any).getClient();
+        for (const id of ids) {
+             const { data: ann } = await client.from('announcements').select('read_by').eq('id', id).single();
+             if (ann) {
+                 const reads = ann.read_by || [];
+                 // Use a special flag or just 'HIDDEN' appended to read_by is hacky but works given constraints
+                 // Better: use `read_by` as the 'Hidden' list for this implementation context
+                 const myId = user?.id || 'HIDDEN'; 
+                 if (!reads.includes(myId)) {
+                     await client.from('announcements').update({ read_by: [...reads, myId] }).eq('id', id);
+                 }
+             }
+        }
+        dataService.getAnnouncements().then(setAnns);
+    };
+
+    const handleForceDelete = async () => {
+        // For Manage Tab: Globally hide/delete
+        const client = (dataService as any).getClient();
+        for (const id of manageSelection) {
+            await client.from('announcements').update({ is_force_deleted: true }).eq('id', id);
+        }
+        setManageSelection(new Set());
+        dataService.getAnnouncements().then(setAnns);
+    };
+
+    // Rich Text Mock
+    const execCmd = (cmd: string, val?: string) => {
+        document.execCommand(cmd, false, val);
     };
 
     return (
-        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center animate-fade-in p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-lg shadow-2xl dark:text-white max-h-[80vh] flex flex-col">
-                <div className="flex justify-between items-center mb-4">
-                    <h3 className="font-bold text-lg flex items-center gap-2"><div className="p-1 bg-yellow-100 rounded text-yellow-600"><Icons.Sparkles size={16}/></div> 系统公告</h3>
-                    <button onClick={onClose}><Icons.Minus size={24}/></button>
-                </div>
-                
-                <div className="flex-1 overflow-y-auto space-y-4 mb-4 custom-scrollbar">
-                    {anns.length === 0 && <p className="text-center text-gray-500 py-8">暂无公告</p>}
-                    {anns.map(a => (
-                        <div key={a.id} className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
-                            <h4 className="font-bold text-blue-600 dark:text-blue-400">{a.title}</h4>
-                            <p className="text-sm mt-1 whitespace-pre-wrap">{a.content}</p>
-                            <div className="text-xs text-gray-400 mt-2 text-right">By {a.creator} - {new Date(a.created_at).toLocaleDateString()}</div>
-                        </div>
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fade-in">
+            <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl dark:text-white overflow-hidden border dark:border-gray-700">
+                <div className="flex border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+                    {['VIEW', 'PUBLISH', 'MANAGE'].map(t => (
+                        <button 
+                            key={t}
+                            onClick={() => setActiveTab(t as any)} 
+                            className={`flex-1 py-3 text-sm font-bold ${activeTab === t ? 'text-blue-600 border-b-2 border-blue-600 bg-white dark:bg-gray-900' : 'text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700'}`}
+                        >
+                            {t === 'VIEW' ? '查看公告' : t === 'PUBLISH' ? '发布公告' : '公告管理'}
+                        </button>
                     ))}
+                    <button onClick={onClose} className="px-4 text-gray-400 hover:text-red-500"><Icons.Minus size={24}/></button>
                 </div>
 
-                {perms.can_publish_announcements && (
-                    <div className="border-t pt-4 dark:border-gray-700">
-                        <input className="w-full border p-2 rounded mb-2 dark:bg-gray-800" placeholder="标题" value={newTitle} onChange={e=>setNewTitle(e.target.value)} />
-                        <textarea className="w-full border p-2 rounded mb-2 h-20 dark:bg-gray-800" placeholder="内容..." value={newContent} onChange={e=>setNewContent(e.target.value)}></textarea>
-                        <button onClick={publish} className="w-full bg-blue-600 text-white py-2 rounded font-bold">发布公告</button>
-                    </div>
-                )}
+                <div className="flex-1 overflow-y-auto p-6 bg-white dark:bg-gray-900 custom-scrollbar">
+                    {activeTab === 'VIEW' && (
+                        <div>
+                             <div className="mb-4 flex justify-between items-center">
+                                <h3 className="font-bold">公告列表</h3>
+                                <button onClick={() => {
+                                    // Handle logic for bulk hide
+                                }} className="text-red-500 text-sm">删除选中(隐藏)</button>
+                             </div>
+                             {userAnns.map(a => (
+                                 <div key={a.id} className="mb-4 border rounded-lg dark:border-gray-700 overflow-hidden">
+                                     <div 
+                                        onClick={() => setExpandedAnn(expandedAnn === a.id ? null : a.id)}
+                                        className="bg-gray-50 dark:bg-gray-800 p-3 flex justify-between items-center cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700"
+                                     >
+                                         <span className="font-medium text-sm flex items-center gap-2">
+                                             {!a.read_by?.includes(user?.id||'xxx') && <span className="w-2 h-2 rounded-full bg-red-500"></span>}
+                                             {a.title}
+                                         </span>
+                                         <span className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString()}</span>
+                                     </div>
+                                     {expandedAnn === a.id && (
+                                         <div className="p-4 bg-white dark:bg-gray-900 text-sm">
+                                             <div className="mb-2 text-xs text-gray-500">发布者: {a.creator}</div>
+                                             <div className="prose dark:prose-invert max-w-none" dangerouslySetInnerHTML={{__html: a.content}}></div>
+                                             {a.allow_delete && (
+                                                 <div className="mt-4 text-right">
+                                                     <button onClick={() => handleHide([a.id])} className="text-red-500 text-xs border border-red-200 px-2 py-1 rounded hover:bg-red-50">删除 (隐藏)</button>
+                                                 </div>
+                                             )}
+                                         </div>
+                                     )}
+                                 </div>
+                             ))}
+                        </div>
+                    )}
+
+                    {activeTab === 'PUBLISH' && (
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-sm font-bold mb-1">接收用户 (空=所有人)</label>
+                                <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto border p-2 rounded dark:border-gray-700">
+                                    {users.map(u => (
+                                        <button 
+                                            key={u.id}
+                                            onClick={() => {
+                                                const s = new Set(targetUsers);
+                                                if(s.has(u.id)) s.delete(u.id); else s.add(u.id);
+                                                setTargetUsers(s);
+                                            }}
+                                            className={`px-2 py-1 text-xs rounded border ${targetUsers.has(u.id) ? 'bg-blue-100 border-blue-300 text-blue-700' : 'bg-gray-50 border-gray-200'}`}
+                                        >
+                                            {u.username}
+                                        </button>
+                                    ))}
+                                </div>
+                            </div>
+                            
+                            <div className="flex items-center gap-4 bg-gray-50 dark:bg-gray-800 p-3 rounded text-sm">
+                                <label className="flex items-center gap-2">
+                                    <input type="checkbox" checked={popupEnabled} onChange={e=>setPopupEnabled(e.target.checked)} />
+                                    弹窗显示
+                                </label>
+                                {popupEnabled && (
+                                    <select value={popupDuration} onChange={e=>setPopupDuration(e.target.value)} className="border rounded p-1 text-xs dark:bg-gray-700">
+                                        {['ONCE','DAY','WEEK','MONTH','YEAR','FOREVER'].map(o => <option key={o} value={o}>{o}</option>)}
+                                    </select>
+                                )}
+                                <label className="flex items-center gap-2 ml-auto">
+                                    <input type="checkbox" checked={allowDelete} onChange={e=>setAllowDelete(e.target.checked)} />
+                                    允许删除
+                                </label>
+                            </div>
+
+                            <input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-700 font-bold" placeholder="公告标题" value={newTitle} onChange={e=>setNewTitle(e.target.value)} />
+                            
+                            <div className="border rounded dark:border-gray-700 overflow-hidden">
+                                <div className="bg-gray-100 dark:bg-gray-800 p-2 flex gap-2 border-b dark:border-gray-700">
+                                    <button onMouseDown={e=>{e.preventDefault(); execCmd('bold')}} className="p-1 hover:bg-gray-200 rounded"><b>B</b></button>
+                                    <button onMouseDown={e=>{e.preventDefault(); execCmd('italic')}} className="p-1 hover:bg-gray-200 rounded"><i>I</i></button>
+                                    <button onMouseDown={e=>{e.preventDefault(); execCmd('underline')}} className="p-1 hover:bg-gray-200 rounded"><u>U</u></button>
+                                </div>
+                                <div 
+                                    className="p-3 min-h-[150px] outline-none dark:bg-gray-900"
+                                    contentEditable
+                                    onInput={e => setNewContent(e.currentTarget.innerHTML)}
+                                    dangerouslySetInnerHTML={{__html: newContent}}
+                                ></div>
+                            </div>
+
+                            <button onClick={handlePublish} className="w-full bg-blue-600 text-white py-3 rounded font-bold hover:bg-blue-700">发布公告</button>
+                        </div>
+                    )}
+
+                    {activeTab === 'MANAGE' && (
+                        <div>
+                             <div className="mb-4 flex gap-4 items-center">
+                                 <select value={manageAccount} onChange={e=>setManageAccount(e.target.value)} className="border p-1 rounded dark:bg-gray-800">
+                                     <option value="SELF">我的账户</option>
+                                     {user?.role_level === 0 && users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                                 </select>
+                                 <button onClick={handleForceDelete} className="bg-red-600 text-white text-xs px-3 py-1 rounded">删除选中 (强制)</button>
+                             </div>
+                             
+                             {manageAnns.map(a => (
+                                 <div key={a.id} className="flex items-center gap-2 p-2 border-b dark:border-gray-800 hover:bg-gray-50 dark:hover:bg-gray-800">
+                                     <input 
+                                        type="checkbox" 
+                                        checked={manageSelection.has(a.id)} 
+                                        onChange={() => {
+                                            const s = new Set(manageSelection);
+                                            if(s.has(a.id)) s.delete(a.id); else s.add(a.id);
+                                            setManageSelection(s);
+                                        }} 
+                                     />
+                                     <div className="flex-1" onClick={() => setExpandedAnn(expandedAnn === a.id ? null : a.id)}>
+                                         <div className="flex justify-between">
+                                            <span className={`font-medium text-sm ${a.is_force_deleted ? 'text-red-500 line-through' : ''}`}>
+                                                {a.is_force_deleted && '(已被删除) '}{a.title}
+                                            </span>
+                                            <span className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString()}</span>
+                                         </div>
+                                     </div>
+                                 </div>
+                             ))}
+                             {expandedAnn && (
+                                 <div className="p-4 bg-gray-50 dark:bg-gray-800 rounded mt-2 text-sm border dark:border-gray-700">
+                                     <div className="font-bold mb-2">详情预览:</div>
+                                     <div dangerouslySetInnerHTML={{__html: anns.find(a=>a.id===expandedAnn)?.content || ''}}></div>
+                                 </div>
+                             )}
+                        </div>
+                    )}
+                </div>
             </div>
         </div>
     );
@@ -132,7 +322,10 @@ const App: React.FC = () => {
   const [theme, setTheme] = useState(localStorage.getItem('sw_theme') || 'light');
   const [storeModalOpen, setStoreModalOpen] = useState(false);
   const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
+
   const perms = authService.permissions;
+  const user = authService.getCurrentUser();
 
   useEffect(() => {
     localStorage.setItem('sw_theme', theme);
@@ -147,10 +340,25 @@ const App: React.FC = () => {
   }, [theme]);
 
   useEffect(() => {
-    if (isAuthenticated && isConfigured()) refreshStores();
+    if (isAuthenticated && isConfigured()) {
+        refreshStores();
+        checkUnread();
+    }
   }, [isAuthenticated]);
 
   const refreshStores = () => dataService.getStores().then(setStores).catch(() => {});
+  
+  const checkUnread = async () => {
+      const allAnns = await dataService.getAnnouncements();
+      const myUnread = allAnns.filter(a => {
+          if (a.is_force_deleted) return false;
+          if (a.target_users && a.target_users.length > 0 && !a.target_users.includes(user?.id || '')) return false;
+          // Simple "Read" check using read_by array
+          if (a.read_by?.includes(user?.id || '')) return false;
+          return true;
+      });
+      setUnreadCount(myUnread.length);
+  };
 
   const handleScreenshot = () => {
       const main = document.querySelector('main');
@@ -166,7 +374,6 @@ const App: React.FC = () => {
       if (currentPage === 'inventory') {
          const products = await dataService.getProducts();
          const batches = await dataService.getBatches(currentStore === 'all' ? undefined : currentStore);
-         // Filter products that have batches if strict view needed, but usually we just map
          return products.map(p => {
              const b = batches.filter(x => x.product_id === p.id);
              return { product: p, totalQuantity: b.reduce((s,i)=>s+i.quantity,0), batches: b };
@@ -182,7 +389,6 @@ const App: React.FC = () => {
       if (!allowedPages.includes(currentPage)) {
           return alert("提示：只能在“库存管理”和“操作日志”页面使用复制功能。");
       }
-      
       try {
           const data = await getDataForExport();
           const summary = generatePageSummary(currentPage, data);
@@ -253,10 +459,14 @@ const App: React.FC = () => {
         <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 sticky top-0 z-10 shadow-sm px-6 py-3 flex items-center justify-between transition-colors">
             <h2 className="text-lg font-semibold capitalize text-gray-800 dark:text-white">{currentPage.split('-')[0]}</h2>
             <div className="flex items-center space-x-3">
-                <button onClick={() => setAnnouncementOpen(true)} title="公告" className="p-2 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 rounded relative">
-                    <Icons.Sparkles size={18} />
-                    <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></span>
+                
+                {/* Announcement Button (Rectangular + Red Dot) */}
+                <button onClick={() => {setAnnouncementOpen(true); setUnreadCount(0);}} title="公告" className="flex items-center gap-2 px-3 py-2 bg-yellow-100 dark:bg-yellow-900/30 text-yellow-800 dark:text-yellow-300 rounded relative hover:bg-yellow-200">
+                    <span className="text-base">📢</span>
+                    <span className="font-bold text-sm">公告</span>
+                    {unreadCount > 0 && <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white dark:border-gray-900"></span>}
                 </button>
+
                 <div className="h-6 w-px bg-gray-300 dark:bg-gray-700 mx-2 hidden md:block"></div>
                 <button onClick={handleScreenshot} title="截图" className="p-2 bg-gray-100 dark:bg-gray-800 rounded text-gray-600 dark:text-gray-300 hidden md:block"><Icons.Box size={18} /></button>
                 <button onClick={handleGenText} title="复制文字" className="p-2 bg-gray-100 dark:bg-gray-800 rounded text-gray-600 dark:text-gray-300"><Icons.Sparkles size={18} /></button>

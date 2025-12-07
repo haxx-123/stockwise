@@ -1,3 +1,4 @@
+
 import React, { useMemo, useEffect, useState } from 'react';
 import { Icons } from '../components/Icons';
 import { Product, Batch } from '../types';
@@ -5,6 +6,10 @@ import { dataService } from '../services/dataService';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 import { isConfigured } from '../services/supabaseClient';
 import { InventoryTable } from './Inventory';
+import { generatePageSummary } from '../utils/formatters';
+
+declare const html2canvas: any;
+declare const window: any;
 
 interface DashboardProps {
   currentStore: string;
@@ -110,6 +115,43 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
       }
   };
 
+  // Helper functions for modal tools
+  const handleScreenshot = () => {
+      const modal = document.getElementById('dashboard-modal-content');
+      if (modal) html2canvas(modal).then((canvas: any) => {
+          const link = document.createElement('a');
+          link.download = `report_screenshot.png`;
+          link.href = canvas.toDataURL();
+          link.click();
+      });
+  };
+
+  const handleCopy = () => {
+      if (!detailModal) return;
+      const text = generatePageSummary('inventory', detailModal.data); // reuse inventory formatter
+      navigator.clipboard.writeText(text);
+      alert("已复制到剪贴板");
+  };
+
+  const handleExcel = () => {
+      if (!detailModal) return;
+      let flatData: any[] = [];
+      detailModal.data.forEach((item: any) => {
+          if (item.batches.length === 0) {
+              flatData.push({ 商品: item.product.name, SKU: item.product.sku, 总数: item.totalQuantity, 批号: '-', 数量: 0, 有效期: '-' });
+          } else {
+              item.batches.forEach((b: any) => {
+                  flatData.push({ 商品: item.product.name, SKU: item.product.sku, 总数: item.totalQuantity, 批号: b.batch_number, 数量: b.quantity, 有效期: b.expiry_date });
+              });
+          }
+      });
+      const wb = (window.XLSX).utils.book_new();
+      const ws = (window.XLSX).utils.json_to_sheet(flatData);
+      (window.XLSX).utils.book_append_sheet(wb, ws, "Sheet1");
+      (window.XLSX).writeFile(wb, `${detailModal.type}_report.xlsx`);
+  };
+
+
   const chartData = useMemo(() => {
      const data: Record<string, number> = {};
      batches.forEach(b => {
@@ -206,10 +248,16 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
 
       {detailModal && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fade-in">
-              <div className="bg-white dark:bg-gray-900 rounded-xl w-full md:w-[95%] max-w-5xl h-[80vh] flex flex-col shadow-2xl dark:text-white border dark:border-gray-700 overflow-hidden">
+              <div id="dashboard-modal-content" className="bg-white dark:bg-gray-900 rounded-xl w-full md:w-[95%] max-w-5xl h-[80vh] flex flex-col shadow-2xl dark:text-white border dark:border-gray-700 overflow-hidden">
                   <div className="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800 shrink-0">
                       <h2 className="text-xl font-bold">{detailModal.type === 'LOW' ? '低库存详情' : '即将过期详情'}</h2>
-                      <button onClick={() => setDetailModal(null)} className="text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"><Icons.Minus size={24} /></button>
+                      <div className="flex items-center gap-2">
+                          <button onClick={handleScreenshot} title="截图" className="p-2 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300"><Icons.Box size={18} /></button>
+                          <button onClick={handleCopy} title="复制文字" className="p-2 bg-gray-200 dark:bg-gray-700 rounded hover:bg-gray-300"><Icons.Sparkles size={18} /></button>
+                          <button onClick={handleExcel} title="导出Excel" className="p-2 bg-green-100 dark:bg-green-900/30 text-green-700 rounded hover:bg-green-200"><Icons.Package size={18} /></button>
+                          <div className="w-px h-6 bg-gray-300 dark:bg-gray-600 mx-1"></div>
+                          <button onClick={() => setDetailModal(null)} className="text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white"><Icons.Minus size={24} /></button>
+                      </div>
                   </div>
                   <div className="flex-1 overflow-auto p-4 custom-scrollbar">
                       {/* Reuse Inventory Table but logic to pass data needs to match the structure */}

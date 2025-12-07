@@ -1,3 +1,4 @@
+
 export type Store = {
   id: string;
   name: string;
@@ -45,6 +46,7 @@ export type Transaction = {
   note?: string;
   operator?: string; 
   snapshot_data?: any; // JSONB full copy of batch/product at time of tx
+  is_undone?: boolean; // NEW: If true, this log is hidden/reverted
   // Join fields
   product?: { name: string };
   store?: { name: string };
@@ -74,13 +76,28 @@ export type User = {
 export type Announcement = {
   id: string;
   title: string;
-  content: string;
+  content: string; // HTML supported
   creator: string;
-  audience_role: string; // 'ALL' or specific role
+  creator_id?: string;
+  
+  // Targeting
+  target_users: string[]; // User IDs, empty = all
+  
+  // Visibility
   valid_until: string;
-  popup_frequency: 'ALWAYS' | 'ONCE';
+  popup_config: {
+      enabled: boolean;
+      duration: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'FOREVER';
+  };
+  
+  // Permissions
+  allow_delete: boolean; // Can receiver hide it?
+  
+  // Status
+  is_force_deleted?: boolean; // Admin deleted for everyone
+  read_by?: string[]; // IDs of users who read/hid it
+  
   created_at: string;
-  is_deleted?: boolean;
 };
 
 export interface AggregatedStock {

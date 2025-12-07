@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
@@ -6,7 +7,6 @@ import { isConfigured } from '../services/supabaseClient';
 import { formatUnit, ph, matchSearch } from '../utils/formatters';
 
 declare const Html5Qrcode: any;
-declare const Html5QrcodeSupportedFormats: any;
 
 interface InventoryProps {
   currentStore?: string;
@@ -29,6 +29,7 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   // Pagination & Delete Mode
   const [page, setPage] = useState(1);
   const PAGE_SIZE = 15;
+  const [inputPage, setInputPage] = useState(1); // Local input state
   const [deleteMode, setDeleteMode] = useState(false);
   const [selectedToDelete, setSelectedToDelete] = useState<Set<string>>(new Set());
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
@@ -51,9 +52,14 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   useEffect(() => {
     if (isConfigured()) loadData();
     setPage(1);
+    setInputPage(1);
     setSelectedToDelete(new Set());
     setSelectedBatchIds(new Set());
   }, [currentStore]);
+
+  useEffect(() => {
+    setInputPage(page);
+  }, [page]);
 
   // --- SCANNER ---
   const startScanner = async () => {
@@ -66,39 +72,17 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
           scannerRef.current = html5QrCode;
           setIsScanning(true);
           
-          // Enhanced Config for 1D and 2D codes
           const config = { 
               fps: 10, 
               qrbox: { width: 250, height: 150 },
               aspectRatio: 1.0,
-              // Explicitly support common formats
-              formatsToSupport: [ 
-                0, // QR_CODE
-                1, // AZTEC
-                2, // CODABAR
-                3, // CODE_39
-                4, // CODE_93
-                5, // CODE_128 (Common Barcode)
-                6, // DATA_MATRIX
-                7, // MAXICODE
-                8, // ITF
-                9, // EAN_13 (Common Product)
-                10, // EAN_8
-                11, // PDF_417
-                12, // RSS_14
-                13, // RSS_EXPANDED
-                14, // UPC_A
-                15, // UPC_E
-              ]
+              formatsToSupport: [ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15 ]
           };
           
           await html5QrCode.start({ facingMode: "environment" }, config, (decodedText: string) => {
-              // Populate Search Bar/Batch Number context
               setSearchQuery(decodedText);
               stopScanner();
-          }, (errorMessage: any) => {
-              // ignore parse errors
-          });
+          }, (errorMessage: any) => { });
       } catch (err: any) {
           setIsScanning(false);
           alert(`相机启动失败: ${err.message}`);
@@ -136,10 +120,6 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
 
     let result = Array.from(map.values());
 
-    // Isolation Check: If a specific store is selected, we technically only want products that have activity or exist there?
-    // Current requirement: "Only show Store A data". The batches are already filtered.
-    // If a product has 0 batches in this store, it shows with 0 stock. This is standard inventory behavior.
-
     result = result.filter(item => {
         if (selectedCategory !== 'All' && (item.product.category || '未分类') !== selectedCategory) return false;
         if (advFilters.sku && !item.product.sku?.toLowerCase().includes(advFilters.sku.toLowerCase())) return false;
@@ -167,6 +147,19 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   useEffect(() => { if (page > totalPages && totalPages > 0) setPage(totalPages); }, [totalPages]);
 
   const paginatedData = aggregatedData.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+
+  // Pagination Handlers
+  const handlePageInput = (e: React.ChangeEvent<HTMLInputElement>) => {
+      setInputPage(Number(e.target.value));
+  };
+  const commitPageInput = () => {
+      let p = inputPage;
+      if (isNaN(p)) p = 1;
+      if (p < 1) p = 1;
+      if (totalPages > 0 && p > totalPages) p = totalPages;
+      setPage(p);
+      setInputPage(p);
+  };
 
   // Bulk Delete
   const handleBulkDelete = async () => {
@@ -222,7 +215,6 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
       <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-4">
           <div className="flex flex-col md:flex-row gap-4 items-center">
               
-              {/* Delete Mode Toggle */}
               <button 
                 onClick={() => deleteMode ? handleBulkDelete() : setDeleteMode(true)}
                 className={`px-4 py-2 rounded-lg font-bold transition-colors whitespace-nowrap w-full md:w-auto ${deleteMode ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}
@@ -276,7 +268,6 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
           
           <div className={`${isScanning ? 'block' : 'hidden'} w-full max-w-sm mx-auto p-2 bg-black rounded-lg mt-4`}>
               <div id="reader" className="w-full"></div>
-              <p className="text-white text-center text-xs mt-2">支持条形码与二维码</p>
           </div>
       </div>
 
@@ -304,11 +295,10 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
                  min="1" 
                  max={totalPages} 
                  className="w-16 text-center bg-white dark:bg-gray-800 border dark:border-gray-600 rounded text-sm dark:text-white font-bold p-1 focus:ring-2 focus:ring-blue-500 outline-none"
-                 value={page} 
-                 onChange={e => {
-                     const val = Number(e.target.value);
-                     if(val >= 1 && val <= totalPages) setPage(val);
-                 }}
+                 value={inputPage} 
+                 onChange={handlePageInput}
+                 onBlur={commitPageInput}
+                 onKeyDown={e => e.key === 'Enter' && commitPageInput()}
                />
                <span className="text-gray-500 dark:text-gray-400 text-sm font-medium">/ 共 {totalPages} 页</span>
            </div>
@@ -336,7 +326,8 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
 
     return (
         <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-x-auto shadow-sm">
-             <table className="w-full text-left border-collapse min-w-[600px]">
+             {/* DESKTOP TABLE VIEW */}
+             <table className="w-full text-left border-collapse min-w-[600px] hidden md:table">
                 <thead className="bg-gray-100 dark:bg-gray-900 text-xs text-gray-600 dark:text-gray-400 uppercase font-semibold">
                     <tr>
                          <th className="px-6 py-4 w-10"></th>
@@ -392,7 +383,6 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                         <td colSpan={deleteMode ? 7 : 6} className="p-0">
                                             <div className="border-t border-b border-gray-200 dark:border-gray-700">
                                                 <table className="w-full text-sm">
-                                                    {/* HIDDEN THEAD: As requested, hide batch headers */}
                                                     <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
                                                         {item.batches.map((batch: any) => (
                                                             <tr key={batch.id} className="hover:bg-white dark:hover:bg-gray-800">
@@ -447,6 +437,69 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                     })}
                 </tbody>
              </table>
+
+             {/* MOBILE CARD VIEW */}
+             <div className="md:hidden flex flex-col divide-y divide-gray-200 dark:divide-gray-700">
+                {data.map((item: any) => {
+                     const isExpanded = expandedProducts.has(item.product.id);
+                     return (
+                         <div key={item.product.id} className="p-4 bg-white dark:bg-gray-800">
+                             <div className="flex justify-between items-start" onClick={() => toggleExpand(item.product.id)}>
+                                 <div className="flex items-start gap-3">
+                                     {deleteMode && (
+                                        <input 
+                                            type="checkbox" 
+                                            checked={selectedToDelete.has(item.product.id)} 
+                                            onChange={(e)=>{e.stopPropagation(); toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id));}} 
+                                            className="mt-1 w-5 h-5 rounded border-gray-300 text-red-600 focus:ring-red-500" 
+                                        />
+                                     )}
+                                     <div>
+                                         <h3 className="font-bold text-gray-900 dark:text-white">{item.product.name}</h3>
+                                         <p className="text-xs text-gray-500">{ph(item.product.category)} | SKU: {ph(item.product.sku)}</p>
+                                     </div>
+                                 </div>
+                                 <div className="text-right">
+                                     <p className="font-bold text-blue-600 dark:text-blue-400">{formatUnit(item.totalQuantity, item.product)}</p>
+                                     <Icons.ChevronDown size={16} className={`ml-auto text-gray-400 transform transition ${isExpanded ? 'rotate-180' : ''}`} />
+                                 </div>
+                             </div>
+
+                             {!compact && isExpanded && (
+                                 <div className="mt-3 flex justify-end">
+                                     <button onClick={() => setAdjustProduct(item.product)} className="text-xs border px-2 py-1 rounded dark:border-gray-600 dark:text-gray-300">调整信息</button>
+                                 </div>
+                             )}
+
+                             {isExpanded && (
+                                 <div className="mt-4 space-y-3 pl-4 border-l-2 border-gray-100 dark:border-gray-700">
+                                     {item.batches.map((batch: any) => (
+                                         <div key={batch.id} className="bg-gray-50 dark:bg-gray-900/50 p-3 rounded text-sm relative">
+                                             {deleteMode && (
+                                                 <div className="absolute top-2 right-2">
+                                                    <input type="checkbox" checked={selectedBatchIds.has(batch.id)} onChange={()=>toggleSelectBatch(batch.id)} className="w-4 h-4 text-red-400" />
+                                                 </div>
+                                             )}
+                                             <div className="grid grid-cols-2 gap-y-1">
+                                                 <span className="text-gray-500 text-xs">批号:</span>
+                                                 <span className="font-mono">{ph(batch.batch_number)}</span>
+                                                 <span className="text-gray-500 text-xs">有效期:</span>
+                                                 <span>{batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}</span>
+                                                 <span className="text-gray-500 text-xs">数量:</span>
+                                                 <span className="font-bold">{formatUnit(batch.quantity, item.product)}</span>
+                                             </div>
+                                             <div className="mt-2 flex gap-2">
+                                                <button onClick={() => setAdjustBatch(batch)} className="flex-1 py-1 bg-white dark:bg-gray-700 border dark:border-gray-600 rounded text-xs">调整</button>
+                                                <button onClick={() => setBillBatch(batch)} className="flex-1 py-1 bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 rounded text-xs font-bold">开单</button>
+                                             </div>
+                                         </div>
+                                     ))}
+                                 </div>
+                             )}
+                         </div>
+                     );
+                })}
+             </div>
              
              {/* Modals */}
              {adjustBatch && (
