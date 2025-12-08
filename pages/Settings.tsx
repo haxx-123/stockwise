@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useEffect } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -32,7 +34,9 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT
     const sqlScript = `
--- STOCKWISE V2.2 MIGRATION SCRIPT
+-- STOCKWISE V2.3 MIGRATION SCRIPT
+-- SQL是/否较上一次发生更改: 是
+-- SQL是/否必须包含重置数据库: 否
 
 DO $$ 
 BEGIN 
@@ -45,6 +49,10 @@ BEGIN
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='is_undone') THEN
         ALTER TABLE transactions ADD COLUMN is_undone boolean default false;
+    END IF;
+    -- New Announcement Flag
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='announcements' AND column_name='allow_delete') THEN
+        ALTER TABLE announcements ADD COLUMN allow_delete boolean default true;
     END IF;
 
     -- 2. Initialization User
@@ -123,16 +131,16 @@ $$ language plpgsql;
         return (
             <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100 flex flex-col gap-6">
                 <h1 className="text-2xl font-bold mb-2">连接配置</h1>
-                <div className="bg-white dark:bg-gray-900 p-4 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 flex flex-col gap-4">
+                <div className="bg-white dark:bg-gray-900 p-4 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 flex flex-col gap-4 max-w-[100vw]">
                     {/* Mobile Vertical Layout enforced via flex-col */}
-                    <div className="flex flex-col gap-4">
+                    <div className="flex flex-col gap-4 w-full">
                         <div className="w-full">
                             <label className="block text-sm font-medium mb-2">Supabase Project URL</label>
-                            <input value={configUrl} onChange={(e) => setConfigUrl(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white" />
+                            <input value={configUrl} onChange={(e) => setConfigUrl(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white break-all" />
                         </div>
                         <div className="w-full">
                             <label className="block text-sm font-medium mb-2">Supabase Anon Key</label>
-                            <input type="password" value={configKey} onChange={(e) => setConfigKey(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white" />
+                            <input type="password" value={configKey} onChange={(e) => setConfigKey(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white break-all" />
                         </div>
                         
                         <div className="w-full">
@@ -140,7 +148,7 @@ $$ language plpgsql;
                                  <h3 className="font-bold text-sm">数据库初始化 SQL</h3>
                                  <button onClick={() => navigator.clipboard.writeText(sqlScript)} className="bg-blue-100 text-blue-700 px-2 py-1 text-xs rounded">复制 SQL</button>
                              </div>
-                             <pre className="bg-black text-green-400 p-4 rounded h-40 overflow-auto text-xs font-mono w-full">{sqlScript}</pre>
+                             <pre className="bg-black text-green-400 p-4 rounded h-40 overflow-auto text-xs font-mono w-full whitespace-pre-wrap break-all">{sqlScript}</pre>
                         </div>
 
                         <button onClick={handleSaveConfig} className="w-full bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 font-bold mt-2">保存配置</button>
@@ -206,7 +214,7 @@ const AccountSettings = () => {
         <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100">
             <h1 className="text-2xl font-bold mb-6">账户设置</h1>
             <div className="grid md:grid-cols-2 gap-8">
-                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6">
+                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 w-full max-w-[100vw]">
                     <h3 className="font-bold border-b pb-2 dark:border-gray-700">基本信息</h3>
                     <div>
                         <label className="block text-sm font-bold text-gray-500 uppercase mb-1">管理权限等级</label>
@@ -228,7 +236,7 @@ const AccountSettings = () => {
                     <button onClick={handleSave} className="w-full py-3 rounded font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md">保存变更</button>
                     <button onClick={() => {if(confirm("确定要退出登录吗？")) authService.logout();}} className="w-full py-3 rounded font-bold border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-900/20">退出账号</button>
                 </div>
-                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 h-fit">
+                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 h-fit w-full max-w-[100vw]">
                      <h3 className="font-bold border-b pb-2 dark:border-gray-700 flex items-center gap-2"><Icons.ArrowRightLeft size={18}/> 快速切换账户</h3>
                      <div className="max-h-60 overflow-y-auto custom-scrollbar border rounded dark:border-gray-700">
                          {lowerUsers.length === 0 && <div className="p-4 text-center text-gray-400 text-sm">无下级账户</div>}
@@ -323,8 +331,8 @@ const PermissionsSettings = () => {
                  </button>
              </div>
 
-             <div className="bg-white dark:bg-gray-900 rounded-xl border dark:border-gray-700 overflow-hidden shadow-sm">
-                 <table className="w-full text-left">
+             <div className="bg-white dark:bg-gray-900 rounded-xl border dark:border-gray-700 overflow-x-auto shadow-sm w-full">
+                 <table className="w-full text-left min-w-[600px]">
                      <thead className="bg-gray-50 dark:bg-gray-800 border-b dark:border-gray-700">
                          <tr>
                              <th className="p-4">用户</th>

@@ -1,4 +1,6 @@
 
+
+
 import React, { useMemo, useEffect, useState } from 'react';
 import { Icons } from '../components/Icons';
 import { Product, Batch } from '../types';
@@ -6,7 +8,7 @@ import { dataService } from '../services/dataService';
 import { BarChart, Bar, LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Cell, CartesianGrid } from 'recharts';
 import { isConfigured } from '../services/supabaseClient';
 import { InventoryTable } from './Inventory';
-import { generatePageSummary } from '../utils/formatters';
+import { generatePageSummary, formatUnit } from '../utils/formatters';
 
 declare const html2canvas: any;
 declare const window: any;
@@ -27,6 +29,10 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
   // Auto-Save Settings
   const [lowStockLimit, setLowStockLimit] = useState(() => Number(localStorage.getItem('sw_low_limit')) || 20);
   const [expiryDays, setExpiryDays] = useState(() => Number(localStorage.getItem('sw_expiry_days')) || 30);
+  
+  // Modal State
+  const [modalSearch, setModalSearch] = useState('');
+  const [modalTypeFilter, setModalTypeFilter] = useState('ALL');
 
   useEffect(() => {
       localStorage.setItem('sw_low_limit', String(lowStockLimit));
@@ -80,10 +86,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
 
   const openDetail = (type: 'LOW' | 'EXPIRY') => {
       if (type === 'LOW') {
-          const relevantBatchIds = new Set<string>();
-          stats.lowStockProducts.forEach(p => {
-              batches.filter(b => b.product_id === p.id).forEach(b => relevantBatchIds.add(b.id));
-          });
           const aggData = stats.lowStockProducts.map(p => ({
               product: p,
               totalQuantity: batches.filter(b => b.product_id === p.id).reduce((s, b) => s + b.quantity, 0),
@@ -104,7 +106,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
           });
           setDetailModal({ type, data: aggData });
       }
+      setModalSearch('');
   };
+
+  const filteredModalData = useMemo(() => {
+      if (!detailModal) return [];
+      let res = detailModal.data;
+      if (modalSearch) {
+          const q = modalSearch.toLowerCase();
+          res = res.filter(item => item.product.name.toLowerCase().includes(q) || item.product.sku?.toLowerCase().includes(q));
+      }
+      return res;
+  }, [detailModal, modalSearch]);
 
   const chartData = useMemo(() => {
      const data: Record<string, number> = {};
@@ -119,7 +132,7 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
   // Modal Tools Logic
   const handleCopy = () => {
       if(!detailModal) return;
-      const content = generatePageSummary('inventory', detailModal.data);
+      const content = generatePageSummary('inventory', filteredModalData);
       navigator.clipboard.writeText(content).then(() => alert("已复制内容"));
   };
   
@@ -137,10 +150,24 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
 
   const handleExcel = () => {
      if(!detailModal || !(window as any).XLSX) return;
-     alert("请使用电脑端进行完整 Excel 导出。移动端暂只支持复制。");
+     const data = filteredModalData.map((item: any) => ({
+         商品: item.product.name,
+         SKU: item.product.sku,
+         总库存: formatUnit(item.totalQuantity, item.product),
+         ...item.batches.reduce((acc: any, b: any, idx: number) => ({
+             ...acc, [`批次${idx+1}_号`]: b.batch_number, [`批次${idx+1}_量`]: b.quantity, [`批次${idx+1}_效期`]: b.expiry_date
+         }), {})
+     }));
+     const ws = (window as any).XLSX.utils.json_to_sheet(data);
+     const wb = (window as any).XLSX.utils.book_new();
+     (window as any).XLSX.utils.book_append_sheet(wb, ws, "Export");
+     (window as any).XLSX.writeFile(wb, `StockWise_Details.xlsx`);
   };
 
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
+
+  // Mobile Detail Item for modal interaction
+  const [mobileDetailItem, setMobileDetailItem] = useState<any>(null);
 
   if (loading) return <div className="p-8 flex justify-center text-gray-500 dark:text-gray-400">加载中...</div>;
 
@@ -156,11 +183,11 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
           <div><p className="text-sm font-medium text-gray-500 mb-1">总库存量</p><h3 className="text-3xl font-bold dark:text-white">{stats.totalItems.toLocaleString()}</h3></div>
           <div className="p-3 bg-blue-50 dark:bg-blue-900/30 text-blue-600 rounded-lg"><Icons.Package size={24} /></div>
         </div>
-        <div onClick={() => openDetail('LOW')} className="bg-white dark:bg-gray-900 p-6 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between cursor-pointer hover:shadow-md">
+        <div onClick={() => openDetail('LOW')} className="bg-white dark:bg-gray-900 p-6 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between cursor-pointer hover:shadow-md transition-shadow">
           <div><p className="text-sm font-medium text-gray-500 mb-1">低库存</p><h3 className="text-3xl font-bold text-red-600">{stats.lowStockProducts.length}</h3></div>
           <div className="p-3 bg-red-50 dark:bg-red-900/30 text-red-600 rounded-lg"><Icons.AlertTriangle size={24} /></div>
         </div>
-        <div onClick={() => openDetail('EXPIRY')} className="bg-white dark:bg-gray-900 p-6 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between cursor-pointer hover:shadow-md">
+        <div onClick={() => openDetail('EXPIRY')} className="bg-white dark:bg-gray-900 p-6 rounded-xl border border-gray-200 shadow-sm flex items-center justify-between cursor-pointer hover:shadow-md transition-shadow">
           <div><p className="text-sm font-medium text-gray-500 mb-1">即将过期</p><h3 className="text-3xl font-bold text-amber-500">{stats.expiringBatches.length}</h3></div>
           <div className="p-3 bg-amber-50 dark:bg-amber-900/30 text-amber-600 rounded-lg"><Icons.Sparkles size={24} /></div>
         </div>
@@ -198,37 +225,74 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
           </div>
       </div>
 
+      {/* Main Detail Modal */}
       {detailModal && (
-          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fade-in">
               <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-5xl h-[80vh] flex flex-col shadow-2xl border dark:border-gray-700">
-                  <div className="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                  <div className="p-4 border-b dark:border-gray-700 flex flex-col md:flex-row justify-between items-center bg-gray-50 dark:bg-gray-800 gap-4">
                       <div className="flex items-center gap-3">
                           <h2 className="text-xl font-bold dark:text-white">{detailModal.type === 'LOW' ? '低库存详情' : '即将过期详情'}</h2>
-                          {/* Modal Tools */}
-                          <div className="flex gap-1 ml-4">
-                             <button onClick={handleScreenshot} title="截图" className="p-1 hover:bg-gray-200 rounded">📷</button>
-                             <button onClick={handleCopy} title="复制" className="p-1 hover:bg-gray-200 rounded">📄</button>
-                             <button onClick={handleExcel} title="Excel" className="p-1 hover:bg-gray-200 rounded">📊</button>
-                          </div>
                       </div>
-                      <button onClick={() => setDetailModal(null)}><Icons.Minus size={24} /></button>
+                      <div className="flex gap-2 items-center w-full md:w-auto">
+                         <input placeholder="搜索..." value={modalSearch} onChange={e=>setModalSearch(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white flex-1 md:w-40"/>
+                         <select value={modalTypeFilter} onChange={e=>setModalTypeFilter(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white">
+                             <option value="ALL">全部</option>
+                         </select>
+                         <div className="flex gap-1 ml-2">
+                             <button onClick={handleScreenshot} title="截图" className="p-1 hover:bg-gray-200 rounded text-xl">📷</button>
+                             <button onClick={handleCopy} title="复制" className="p-1 hover:bg-gray-200 rounded text-xl">📄</button>
+                             <button onClick={handleExcel} title="Excel" className="p-1 hover:bg-gray-200 rounded text-xl">📊</button>
+                          </div>
+                          <button onClick={() => setDetailModal(null)}><Icons.Minus size={24} className="text-gray-500"/></button>
+                      </div>
                   </div>
                   <div id="dashboard-modal-content" className="flex-1 overflow-auto p-4 custom-scrollbar">
                       <InventoryTable 
-                        data={detailModal.data} 
+                        data={filteredModalData} 
                         onRefresh={() => {}} 
                         currentStore={currentStore} 
                         compact={true} 
                         deleteMode={false}
                         selectedToDelete={new Set()}
                         selectedBatchIds={new Set()}
-                        onMobileClick={(item: any) => { 
-                             // Navigate to inventory page on click
-                             onNavigate('inventory'); 
-                        }}
+                        // Click Handler to open independent mobile-like page
+                        onMobileClick={(item: any) => setMobileDetailItem(item)}
                       />
                   </div>
               </div>
+          </div>
+      )}
+
+      {/* Independent Mobile Detail Page (Stacked on top) */}
+      {mobileDetailItem && (
+          <div className="fixed inset-0 bg-gray-50 dark:bg-gray-900 z-[60] overflow-y-auto animate-fade-in p-4 pb-24">
+              <div className="flex items-center gap-3 mb-4 sticky top-0 bg-gray-50 dark:bg-gray-900 z-10 py-2 border-b dark:border-gray-800">
+                  <button onClick={() => setMobileDetailItem(null)} className="p-2 bg-white dark:bg-gray-800 rounded-full shadow"><Icons.ArrowRightLeft size={20} className="transform rotate-180 dark:text-white"/></button>
+                  <h1 className="font-bold text-lg dark:text-white">{mobileDetailItem.product.name} - 详情</h1>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border dark:border-gray-700 mb-4">
+                  <div className="flex justify-between items-center">
+                       <div>
+                           <div className="text-xs text-gray-500">SKU: {mobileDetailItem.product.sku}</div>
+                           <div className="text-xs text-gray-500">类别: {mobileDetailItem.product.category}</div>
+                       </div>
+                       <div className="text-right">
+                           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{formatUnit(mobileDetailItem.totalQuantity, mobileDetailItem.product)}</div>
+                       </div>
+                  </div>
+              </div>
+
+              <h3 className="font-bold dark:text-white mb-2">批次列表</h3>
+              <InventoryTable 
+                  data={[mobileDetailItem]} 
+                  onRefresh={()=>{}} 
+                  currentStore={currentStore}
+                  deleteMode={false}
+                  selectedToDelete={new Set()}
+                  selectedBatchIds={new Set()}
+                  mobileExpanded={true} 
+                  isMobileOverlay={true}
+              />
           </div>
       )}
     </div>

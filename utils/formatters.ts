@@ -1,4 +1,5 @@
-import { Product } from '../types';
+
+import { Product, RoleLevel } from '../types';
 
 export const DEFAULT_IMPORT_RATIO = 10;
 
@@ -40,11 +41,40 @@ export const formatUnit = (quantity: number, product: Product) => {
   return result.join(' ');
 };
 
+export const getUnitSplit = (quantity: number, product: Product) => {
+    const ratio = product.split_ratio || 1;
+    const major = Math.floor(quantity / ratio);
+    const minor = quantity % ratio;
+    return { major, minor };
+};
+
 export const matchSearch = (text: string | null | undefined, query: string): boolean => {
     if (!text) return false;
     const cleanText = text.toLowerCase();
     const cleanQuery = query.toLowerCase();
     return cleanText.includes(cleanQuery); 
+};
+
+// --- COLORS ---
+export const getUserColor = (roleLevel: RoleLevel | undefined): string => {
+    if (roleLevel === undefined) return 'text-black';
+    const level = Number(roleLevel);
+    if (level === 0) return 'text-[#9333EA]'; // Bright Purple
+    if (level === 1) return 'text-[#EAB308]'; // Bright Gold
+    if (level === 2) return 'text-[#2563EB]'; // Bright Blue
+    if (level >= 3 && level <= 5) return 'text-gray-400'; // Pale/Fade
+    return 'text-black'; // 06+
+};
+
+export const getLogColor = (type: string): string => {
+    switch (type) {
+        case 'IN': return 'text-green-600';
+        case 'OUT': return 'text-red-600';
+        case 'ADJUST': return 'text-blue-500';
+        case 'IMPORT': return 'text-purple-600';
+        case 'DELETE': return 'text-red-800 font-bold';
+        default: return 'text-gray-600';
+    }
 };
 
 // Human Readable Page Summary (Optimized for non-tech users)
@@ -61,7 +91,7 @@ export const generatePageSummary = (pageName: string, data: any) => {
             if (item.batches && item.batches.length > 0) {
                 batchInfo = item.batches.map((b: any) => {
                     const expiry = b.expiry_date ? b.expiry_date.split('T')[0] : '无有效期';
-                    return `   • 批号: ${b.batch_number} | 数量: ${b.quantity} | 有效期: ${expiry}`;
+                    return `   • 批号: ${b.batch_number} | 数量: ${formatUnit(b.quantity, item.product)} | 有效期: ${expiry}`;
                 }).join('\n');
             } else {
                 batchInfo = '   (无批次信息)';
@@ -85,7 +115,6 @@ export const generatePageSummary = (pageName: string, data: any) => {
             const opMap: Record<string, string> = { 'INSERT': '新增', 'UPDATE': '修改', 'DELETE': '删除' };
             const opName = opMap[log.operation] || log.operation;
             
-            // Format JSON data nicely
             const formatData = (obj: any) => {
                 if(!obj) return '无';
                 return Object.entries(obj).map(([k,v]) => `${k}: ${v}`).join(', ');

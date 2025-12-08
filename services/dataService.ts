@@ -1,5 +1,6 @@
 
 
+
 import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel } from '../types';
 import { getSupabaseClient } from './supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from './authService';
@@ -115,9 +116,6 @@ class DataService {
           await client.from('announcements').update({ is_force_deleted: true }).eq('id', id);
       } else {
           // Soft delete for "My Announcements" (hide from self)
-          // We append a special flag 'HIDDEN_BY_USERID' to read_by array or similar logic
-          // But strict generic soft delete usually just hides it.
-          // For this requirement: "Hide from self"
           const { data: ann } = await client.from('announcements').select('read_by').eq('id', id).single();
           if (ann && user) {
               const reads = ann.read_by || [];
@@ -206,12 +204,6 @@ class DataService {
 
     const products = data || [];
     
-    // STRICT ISOLATION:
-    // If currentStoreId is specific (not all), only show products bound to THAT store OR products with no binding (Global).
-    // HOWEVER, prompt says "Strict Isolation... Entry in Store A bound to Store A".
-    // If bound_store_id is present, it MUST match.
-    // If bound_store_id is null, it's visible to all (Legacy or Shared).
-    
     if (currentStoreId && currentStoreId !== 'all') {
          return products.filter(p => !p.bound_store_id || p.bound_store_id === currentStoreId);
     }
@@ -284,7 +276,6 @@ class DataService {
     const { data, error } = await query;
     if (error) throw new Error(error.message);
     
-    // Filter out 0 qty logic? Usually yes, but keep consistent.
     return (data || []).filter((b: any) => b.quantity > 0).map((b: any) => ({
         ...b,
         store_name: b.store?.name
@@ -398,7 +389,6 @@ class DataService {
           const key = t.timestamp.split('T')[0];
           if (map.has(key)) {
               const curr = map.get(key)!;
-              // STRICT: Only IN and OUT (Import/Adjust ignored for Flow Chart)
               if (t.type === 'IN') curr.in += t.quantity;
               if (t.type === 'OUT') curr.out += t.quantity;
           }
@@ -457,7 +447,7 @@ class DataService {
         if (!user.allowed_store_ids.includes(storeId)) throw new Error("无权操作此门店");
     }
 
-    // Strict store filter: Only pick batches from this store
+    // Strict store filter
     let query = client.from('batches').select('*').eq('product_id', productId).gt('quantity', 0).or('is_archived.is.null,is_archived.eq.false').eq('store_id', storeId).order('expiry_date', { ascending: true });
 
     const { data: batches } = await query;
@@ -492,7 +482,7 @@ class DataService {
       const { data: oldBatch } = await client.from('batches').select('*').eq('id', batchId).single();
       const user = authService.getCurrentUser();
 
-      // Handle Quantity via Stock Op to ensure transaction record
+      // Handle Quantity via Stock Op
       if (updates.quantity !== undefined && oldBatch) {
           const delta = updates.quantity - oldBatch.quantity;
           if (delta !== 0) {
@@ -516,20 +506,19 @@ class DataService {
           delete updates.quantity;
       }
 
-      // Handle property adjustments (Expiry, etc)
+      // Handle property adjustments
       if (Object.keys(updates).length > 0) {
           const changeDesc = Object.keys(updates).map(k => `${k}: [${(oldBatch as any)[k]}]->[${(updates as any)[k]}]`).join(', ');
           
           await client.from('batches').update(updates).eq('id', batchId);
           
-          // Log adjustment without qty change
           await client.from('transactions').insert({
               id: crypto.randomUUID(),
               type: 'ADJUST',
               batch_id: batchId,
               product_id: oldBatch.product_id,
               store_id: oldBatch.store_id,
-              quantity: 0, // No quantity change logic here
+              quantity: 0,
               timestamp: new Date().toISOString(),
               note: `修改批次属性: ${changeDesc}`,
               operator: user?.username || 'System',
@@ -543,7 +532,6 @@ class DataService {
       if(!client) throw new Error("No DB");
       
       const user = authService.getCurrentUser();
-      
       const { data: batch } = await client.from('batches').select('*, product:products(*)').eq('id', batchId).single();
 
       // Always Soft Delete
@@ -579,7 +567,6 @@ class DataService {
       if (error) throw new Error(error.message);
 
       if (batch.quantity > 0) {
-         // This is an IN operation conceptually
          await this.updateStock(batch.product_id, batch.store_id, batch.quantity, 'IN', '新批次入库', id);
       }
       return id;
@@ -595,19 +582,15 @@ class DataService {
       const user = authService.getCurrentUser();
       const p = user?.permissions;
       
-      // Permission checks
       if (p?.logs_level === 'C' && tx.operator !== user?.username) {
           throw new Error("权限不足: 只能撤销自己的操作");
       }
 
       await this.logClientAction('UNDO_TRANSACTION', { transactionId });
-      // Mark as undone so it doesn't show in list
       await client.from('transactions').update({ is_undone: true }).eq('id', transactionId);
 
       if (['IN', 'OUT', 'IMPORT', 'RESTORE'].includes(tx.type)) {
-          // Reverse quantity
           const inverseQty = -tx.quantity; 
-          
           const { error } = await client.rpc('operate_stock', {
               p_batch_id: tx.batch_id,
               p_qty_change: inverseQty,
@@ -619,7 +602,6 @@ class DataService {
           if (error) throw new Error(error.message);
       } 
       else if (tx.type === 'DELETE') {
-          // Restore Soft Deleted
           if (tx.batch_id) {
               await client.from('batches').update({ is_archived: false }).eq('id', tx.batch_id);
           }
@@ -627,9 +609,6 @@ class DataService {
               await client.from('products').update({ is_archived: false }).eq('id', tx.product_id);
           }
       }
-      // ADJUST undo is complex (property restore), simplistic logic might not cover all property changes,
-      // but if it was quantity adjust, it falls into first block if qty != 0. 
-      // If it was property adjust (qty=0), we might need to look at snapshot to reverse.
   }
 }
 

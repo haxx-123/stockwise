@@ -1,4 +1,6 @@
 
+
+
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
@@ -12,7 +14,7 @@ import { Icons } from './components/Icons';
 import { dataService } from './services/dataService';
 import { Store, Announcement, User } from './types';
 import { isConfigured } from './services/supabaseClient';
-import { generatePageSummary } from './utils/formatters';
+import { generatePageSummary, formatUnit } from './utils/formatters';
 import { authService } from './services/authService';
 import { RichTextEditor } from './components/RichTextEditor';
 
@@ -46,7 +48,7 @@ const LoginScreen = ({ onLogin }: any) => {
 };
 
 // --- ANNOUNCEMENT SYSTEM ---
-const AnnouncementOverlay = ({ onClose }: any) => {
+const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount }: any) => {
     const [view, setView] = useState<'MY_LIST' | 'DETAIL' | 'MANAGE_SELECT' | 'MANAGE_LIST' | 'PUBLISH'>('MY_LIST');
     const [anns, setAnns] = useState<Announcement[]>([]);
     const [detailAnn, setDetailAnn] = useState<Announcement | null>(null);
@@ -60,6 +62,7 @@ const AnnouncementOverlay = ({ onClose }: any) => {
     const [targetUsers, setTargetUsers] = useState<Set<string>>(new Set());
     const [popupEnabled, setPopupEnabled] = useState(false);
     const [popupDuration, setPopupDuration] = useState('ONCE');
+    const [allowDelete, setAllowDelete] = useState(true);
 
     const user = authService.getCurrentUser();
     const perms = authService.permissions;
@@ -77,6 +80,10 @@ const AnnouncementOverlay = ({ onClose }: any) => {
             !a.read_by?.includes(`HIDDEN_BY_${myId}`)
         );
         setAnns(my);
+        
+        // Calculate Unread
+        const unread = my.filter(a => !a.read_by?.includes(myId)).length;
+        setUnreadCount(unread);
     };
 
     const loadUserAnns = async (uid: string) => {
@@ -100,9 +107,19 @@ const AnnouncementOverlay = ({ onClose }: any) => {
         await dataService.createAnnouncement({
             title: newTitle, content: newContent, creator: user?.username, creator_id: user?.id,
             target_users: Array.from(targetUsers), valid_until: new Date(Date.now() + 86400000 * 365).toISOString(),
-            popup_config: { enabled: popupEnabled, duration: popupDuration }
+            popup_config: { enabled: popupEnabled, duration: popupDuration },
+            allow_delete: allowDelete
         });
         alert("发布成功"); setView('MY_LIST'); loadMyAnns();
+    };
+
+    const openDetail = (ann: Announcement) => {
+        setDetailAnn(ann);
+        setView('DETAIL');
+        if (!manageMode && user) {
+            dataService.markAnnouncementRead(ann.id, user.id);
+            setUnreadCount((prev:number) => Math.max(0, prev - 1));
+        }
     };
 
     // --- FULL PAGE DETAIL (Overlay) ---
@@ -110,7 +127,7 @@ const AnnouncementOverlay = ({ onClose }: any) => {
         return (
              <div className="fixed inset-0 bg-white dark:bg-gray-900 z-[100] flex flex-col animate-fade-in w-full h-full">
                  <div className="p-4 border-b flex justify-between items-center bg-gray-50 dark:bg-gray-800 shrink-0">
-                     <button onClick={()=>setView(manageMode ? 'MANAGE_LIST' : 'MY_LIST')} className="p-2 bg-gray-200 dark:bg-gray-700 rounded-full"><Icons.ArrowRightLeft className="rotate-180 dark:text-white" size={24}/></button>
+                     <button onClick={()=>setView(manageMode ? 'MANAGE_LIST' : 'MY_LIST')} className="p-2 bg-gray-200 dark:bg-gray-700 rounded-full"><Icons.Minus className="dark:text-white" size={24}/></button>
                      <h2 className="font-bold dark:text-white truncate mx-4 flex-1 text-center">公告详情</h2>
                      <div className="w-10"></div>
                  </div>
@@ -152,6 +169,7 @@ const AnnouncementOverlay = ({ onClose }: any) => {
                                      <option value="FOREVER">永久</option>
                                  </select>
                              )}
+                             <label className="flex items-center gap-2 dark:text-white font-bold mt-2"><input type="checkbox" checked={allowDelete} onChange={e=>setAllowDelete(e.target.checked)}/> 允许接收者删除(隐藏)</label>
                          </div>
                      </div>
                      <button onClick={handlePublish} className="w-full bg-blue-600 text-white py-3 rounded font-bold shadow-lg">发布公告</button>
@@ -180,8 +198,11 @@ const AnnouncementOverlay = ({ onClose }: any) => {
                             </div>
                             <div className="space-y-2">
                                 {anns.map(a => (
-                                    <div key={a.id} onClick={()=>{if(!deleteMode){setDetailAnn(a); setView('DETAIL');}}} className="p-4 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow">
-                                        {deleteMode && <input type="checkbox" onClick={e=>e.stopPropagation()} onChange={e=>{const s=new Set(selectedToDelete); if(e.target.checked)s.add(a.id); else s.delete(a.id); setSelectedToDelete(s)}} className="w-5 h-5" />}
+                                    <div key={a.id} onClick={()=>{if(!deleteMode){openDetail(a);}}} className="p-4 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow relative">
+                                        {/* Unread Dot */}
+                                        {!manageMode && user && !a.read_by?.includes(user.id) && <div className="w-2 h-2 rounded-full bg-red-600 absolute top-4 right-4"></div>}
+                                        
+                                        {deleteMode && a.allow_delete && <input type="checkbox" onClick={e=>e.stopPropagation()} onChange={e=>{const s=new Set(selectedToDelete); if(e.target.checked)s.add(a.id); else s.delete(a.id); setSelectedToDelete(s)}} className="w-5 h-5" />}
                                         <div className="flex-1">
                                             <div className="font-bold dark:text-white text-lg">{a.title}</div>
                                             <div className="text-xs text-gray-400 mt-1">{new Date(a.created_at).toLocaleDateString()} - {a.creator}</div>
@@ -216,7 +237,7 @@ const AnnouncementOverlay = ({ onClose }: any) => {
                             </div>
                             <div className="space-y-2">
                                 {anns.map(a => (
-                                    <div key={a.id} onClick={()=>{if(!deleteMode){setDetailAnn(a); setView('DETAIL');}}} className="p-4 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center gap-3 cursor-pointer">
+                                    <div key={a.id} onClick={()=>{if(!deleteMode){openDetail(a);}}} className="p-4 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center gap-3 cursor-pointer">
                                         {deleteMode && <input type="checkbox" onClick={e=>e.stopPropagation()} onChange={e=>{const s=new Set(selectedToDelete); if(e.target.checked)s.add(a.id); else s.delete(a.id); setSelectedToDelete(s)}} className="w-5 h-5" />}
                                         <div className="flex-1">
                                             <div className={`font-bold ${a.is_force_deleted ? 'text-red-500' : 'dark:text-white'}`}>
@@ -242,8 +263,12 @@ const App: React.FC = () => {
   const [stores, setStores] = useState<Store[]>([]);
   const [theme, setTheme] = useState(localStorage.getItem('sw_theme') || 'light');
   const [storeModalOpen, setStoreModalOpen] = useState(false);
-  const [announcementOpen, setAnnouncementOpen] = useState(false);
   
+  // Announcement State
+  const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
+  const [forcedAnnouncement, setForcedAnnouncement] = useState<Announcement | null>(null);
+
   // Mobile Tools Menu
   const [toolsOpen, setToolsOpen] = useState(false);
 
@@ -267,7 +292,7 @@ const App: React.FC = () => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
   
-  useEffect(() => { if (isAuthenticated && isConfigured()) refreshStores(); }, [isAuthenticated]);
+  useEffect(() => { if (isAuthenticated && isConfigured()) { refreshStores(); checkAnnouncements(); } }, [isAuthenticated]);
 
   const refreshStores = async () => {
       const s = await dataService.getStores();
@@ -277,6 +302,25 @@ const App: React.FC = () => {
               const firstAllowed = s.find(st => user.allowed_store_ids.includes(st.id));
               if (firstAllowed) setCurrentStore(firstAllowed.id);
           }
+      }
+  };
+
+  const checkAnnouncements = async () => {
+      if (!user) return;
+      const all = await dataService.getAnnouncements();
+      const myId = user.id;
+      // Filter visible
+      const visible = all.filter(a => !a.is_force_deleted && (!a.target_users?.length || a.target_users.includes(myId)) && !a.read_by?.includes(`HIDDEN_BY_${myId}`));
+      const unread = visible.filter(a => !a.read_by?.includes(myId));
+      setUnreadAnnouncements(unread.length);
+
+      // Check Forced Popup
+      // "Online: Immediate" -> We check here.
+      // "Offline: Next Login" -> We check here.
+      // Filter for popup active, unread by me
+      const forced = unread.find(a => a.popup_config?.enabled);
+      if (forced) {
+          setForcedAnnouncement(forced);
       }
   };
 
@@ -324,18 +368,39 @@ const App: React.FC = () => {
       }
       if(!(window as any).XLSX) return alert("导出组件未加载");
 
-      // We need to fetch current visible data again or access state (simplified here by fetching)
-      // Ideally, pass data from components up, but for this structure we re-fetch to keep it simple.
       (async () => {
           let data: any[] = [];
           if(currentPage === 'inventory') {
              const p = await dataService.getProducts(false, currentStore);
              const b = await dataService.getBatches(currentStore==='all'?undefined:currentStore);
-             data = p.map(prod => ({
-                 商品: prod.name,
-                 SKU: prod.sku,
-                 总库存: prod.split_ratio ? `${Math.floor(b.filter(x=>x.product_id===prod.id).reduce((s,i)=>s+i.quantity,0)/prod.split_ratio)}${prod.unit_name}` : b.filter(x=>x.product_id===prod.id).reduce((s,i)=>s+i.quantity,0)
-             }));
+             
+             // FLATTEN FOR EXCEL: One row per batch, or one row per product if no batches
+             // Requirement: Mother row and Child row info included.
+             data = [];
+             for (const prod of p) {
+                 const prodBatches = b.filter(x => x.product_id === prod.id);
+                 if (prodBatches.length === 0) {
+                     data.push({
+                         商品: prod.name, SKU: prod.sku, 类别: prod.category, 
+                         总库存: 0, 批号: '-', 门店: '-', 大单位数: 0, 小单位数: 0, 有效期: '-'
+                     });
+                 } else {
+                     for (const batch of prodBatches) {
+                         data.push({
+                             商品: prod.name, 
+                             SKU: prod.sku, 
+                             类别: prod.category,
+                             总库存: formatUnit(prodBatches.reduce((s,i)=>s+i.quantity,0), prod),
+                             批号: batch.batch_number,
+                             门店: batch.store_name || '-',
+                             大单位数: Math.floor(batch.quantity / (prod.split_ratio||1)),
+                             小单位数: batch.quantity % (prod.split_ratio||1),
+                             有效期: batch.expiry_date ? batch.expiry_date.split('T')[0] : '-'
+                         });
+                     }
+                 }
+             }
+
           } else if(currentPage === 'logs') {
               const l = await dataService.getTransactions('ALL', 200);
               data = l.map(x => ({
@@ -380,10 +445,15 @@ const App: React.FC = () => {
                 
                 {/* Unified Tool Menu */}
                 <div className="relative">
-                    <button onClick={() => setToolsOpen(!toolsOpen)} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800"><Icons.Menu size={24}/></button>
+                    <button onClick={() => setToolsOpen(!toolsOpen)} className="p-2 rounded hover:bg-gray-100 dark:hover:bg-gray-800 relative">
+                        <Icons.Menu size={24}/>
+                        {unreadAnnouncements > 0 && <div className="w-2.5 h-2.5 bg-red-600 rounded-full absolute top-1 right-1 ring-2 ring-white"></div>}
+                    </button>
                     {toolsOpen && (
                         <div className="absolute right-0 top-12 bg-white dark:bg-gray-800 border dark:border-gray-700 shadow-xl rounded-xl w-48 flex flex-col z-50 overflow-hidden animate-fade-in">
-                            <button onClick={()=>{setAnnouncementOpen(true); setToolsOpen(false);}} className="p-3 text-left border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">📢 公告</button>
+                            <button onClick={()=>{setAnnouncementOpen(true); setToolsOpen(false);}} className="p-3 text-left border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 flex justify-between items-center">
+                                📢 公告 {unreadAnnouncements > 0 && <span className="bg-red-600 text-white text-xs px-1.5 rounded-full">{unreadAnnouncements}</span>}
+                            </button>
                             <button onClick={()=>{handleScreenshot(); setToolsOpen(false);}} className="p-3 text-left border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">📷 截图</button>
                             {['inventory','logs','audit','settings-perms'].includes(currentPage) && 
                                 <button onClick={()=>{handleCopyText(); setToolsOpen(false);}} className="p-3 text-left border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">📄 复制文字</button>
@@ -414,7 +484,24 @@ const App: React.FC = () => {
       {storeModalOpen && !perms.only_view_config && (
           <StoreManager isOpen={storeModalOpen} onClose={() => setStoreModalOpen(false)} stores={stores} currentStore={currentStore} setStore={setCurrentStore} refresh={refreshStores} />
       )}
-      {announcementOpen && <AnnouncementOverlay onClose={() => setAnnouncementOpen(false)} />}
+      
+      {announcementOpen && <AnnouncementOverlay onClose={() => setAnnouncementOpen(false)} unreadCount={unreadAnnouncements} setUnreadCount={setUnreadAnnouncements} />}
+      
+      {/* FORCED POPUP */}
+      {forcedAnnouncement && (
+          <div className="fixed inset-0 bg-black/80 z-[200] flex items-center justify-center p-6 animate-fade-in">
+              <div className="bg-white dark:bg-gray-900 rounded-xl max-w-lg w-full p-6 shadow-2xl">
+                  <h1 className="text-2xl font-bold text-red-600 mb-4">重要公告 (必读)</h1>
+                  <h2 className="text-xl font-bold mb-2 dark:text-white">{forcedAnnouncement.title}</h2>
+                  <div className="prose dark:prose-invert max-h-60 overflow-y-auto mb-6 custom-scrollbar" dangerouslySetInnerHTML={{__html: forcedAnnouncement.content}} />
+                  <button onClick={()=>{
+                      dataService.markAnnouncementRead(forcedAnnouncement.id, user!.id);
+                      setForcedAnnouncement(null);
+                      setUnreadAnnouncements(p=>Math.max(0, p-1));
+                  }} className="w-full bg-blue-600 text-white py-3 rounded font-bold">我已阅读并知晓</button>
+              </div>
+          </div>
+      )}
     </div>
   );
 };

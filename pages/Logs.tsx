@@ -1,9 +1,12 @@
 
+
+
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { Transaction } from '../types';
+import { Transaction, User } from '../types';
 import { Icons } from '../components/Icons';
 import { authService } from '../services/authService';
+import { getUserColor, getLogColor } from '../utils/formatters';
 
 export const Logs: React.FC = () => {
     const [logs, setLogs] = useState<Transaction[]>([]);
@@ -11,12 +14,22 @@ export const Logs: React.FC = () => {
     const [page, setPage] = useState(1);
     const PAGE_SIZE = 15;
     const [detailLog, setDetailLog] = useState<Transaction | null>(null);
+    const [userMap, setUserMap] = useState<Map<string, number>>(new Map());
 
     useEffect(() => { loadLogs(); setPage(1); }, [filter]);
 
     const loadLogs = async () => {
         try {
-            const data = await dataService.getTransactions(filter, 200);
+            const [data, users] = await Promise.all([
+                dataService.getTransactions(filter, 200),
+                dataService.getUsers()
+            ]);
+            
+            // Build User Map for Colors
+            const uMap = new Map<string, number>();
+            users.forEach(u => uMap.set(u.username, u.role_level));
+            setUserMap(uMap);
+
             // Hide RESTORE type from UI
             setLogs(data.filter(t => t.type !== 'RESTORE'));
         } catch(e) { console.error(e); }
@@ -83,8 +96,8 @@ export const Logs: React.FC = () => {
                         {paginatedLogs.map(log => (
                             <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                                 <td className="p-4 text-gray-500">{new Date(log.timestamp).toLocaleString()}</td>
-                                <td className="p-4 font-bold dark:text-gray-200">{log.operator}</td>
-                                <td className="p-4"><span className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-xs">{typeLabel(log.type)}</span></td>
+                                <td className={`p-4 font-bold ${getUserColor(userMap.get(log.operator || ''))}`}>{log.operator}</td>
+                                <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${getLogColor(log.type)} bg-gray-100 dark:bg-gray-900`}>{typeLabel(log.type)}</span></td>
                                 <td className="p-4">{renderContent(log)}</td>
                                 <td className="p-4 text-right">{renderQty(log)}</td>
                                 <td className="p-4 text-right"><button onClick={()=>handleUndo(log.id)} className="text-xs text-red-500 hover:underline font-bold">撤销</button></td>
@@ -101,7 +114,7 @@ export const Logs: React.FC = () => {
                         <div className="flex flex-col gap-1">
                             <div className="text-[10px] text-gray-400">{new Date(log.timestamp).toLocaleString()}</div>
                             <div className="flex items-center gap-2">
-                                <span className={`text-xs font-bold px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 dark:text-gray-200`}>{typeLabel(log.type)}</span>
+                                <span className={`text-xs font-bold px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 ${getLogColor(log.type)}`}>{typeLabel(log.type)}</span>
                                 <span className="text-sm font-bold dark:text-white">{log.type === 'ADJUST' || log.type === 'DELETE' ? (log.product?.name || '属性变更') : log.product?.name}</span>
                             </div>
                         </div>
@@ -129,8 +142,8 @@ export const Logs: React.FC = () => {
                         <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl border dark:border-gray-700">
                              <div className="grid grid-cols-2 gap-4 text-sm dark:text-gray-300">
                                  <div><label className="block text-gray-500 text-xs">时间</label>{new Date(detailLog.timestamp).toLocaleString()}</div>
-                                 <div><label className="block text-gray-500 text-xs">操作人</label>{detailLog.operator}</div>
-                                 <div><label className="block text-gray-500 text-xs">类型</label>{typeLabel(detailLog.type)}</div>
+                                 <div><label className="block text-gray-500 text-xs">操作人</label><span className={getUserColor(userMap.get(detailLog.operator||''))}>{detailLog.operator}</span></div>
+                                 <div><label className="block text-gray-500 text-xs">类型</label><span className={getLogColor(detailLog.type)}>{typeLabel(detailLog.type)}</span></div>
                                  <div><label className="block text-gray-500 text-xs">数量变动</label>{renderQty(detailLog)}</div>
                              </div>
                         </div>
