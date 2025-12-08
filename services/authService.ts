@@ -1,4 +1,5 @@
 
+
 import { User, RoleLevel, UserPermissions } from '../types';
 import { dataService } from './dataService';
 
@@ -57,7 +58,7 @@ class AuthService {
 
         // 2. Check DB Users
         try {
-            const users = await dataService.getUsers(); // Includes archived? No.
+            const users = await dataService.getUsers(); 
             const user = users.find(u => u.username === username && u.password === passwordInput);
             
             if (user) {
@@ -83,10 +84,6 @@ class AuthService {
     }
 
     async switchAccount(targetUser: User) {
-        // Switch to a lower level user without password if we are higher level?
-        // Or just login as them?
-        // Prompt says "Quickly switch to any user with lower permission".
-        // Assuming implicit trust for admin -> subordinate switching.
         this.setSession(targetUser);
         await dataService.logClientAction('SWITCH_ACCOUNT', { target: targetUser.username });
         window.location.reload();
@@ -106,8 +103,6 @@ class AuthService {
             can_see_subordinate_logs: p.logs_level === 'A' || p.logs_level === 'B',
             can_publish_announcements: p.announcement_rule === 'PUBLISH',
             is_global_store: p.store_scope === 'GLOBAL',
-            // Always Soft Delete
-            can_hard_delete: false, 
             can_export_excel: p.show_excel,
             has_perm_page: !p.hide_perm_page,
             can_view_peers: p.view_peers

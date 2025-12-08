@@ -102,7 +102,7 @@ export type Announcement = {
   };
   allow_delete: boolean; // "Can hide"
   is_force_deleted?: boolean; // Admin soft delete (invalid for everyone)
-  read_by?: string[]; 
+  read_by?: string[]; // Array of User IDs OR 'HIDDEN_BY_USERID' strings
   created_at: string;
 };
 

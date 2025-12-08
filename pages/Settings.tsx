@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -30,7 +31,7 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
         if (onThemeChange) onThemeChange(theme);
     };
     
-    // UPDATED SQL SCRIPT: Uses ALTER TABLE to preserve data
+    // UPDATED SQL SCRIPT
     const sqlScript = `
 -- STOCKWISE V2.1 MIGRATION SCRIPT (Safe Update)
 
@@ -128,20 +129,20 @@ $$ language plpgsql;
 
     if (subPage === 'config') {
         return (
-            <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100">
-                <h1 className="text-2xl font-bold mb-6">连接配置</h1>
-                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6">
+            <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100 flex flex-col gap-6">
+                <h1 className="text-2xl font-bold mb-2">连接配置</h1>
+                <div className="bg-white dark:bg-gray-900 p-4 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 flex flex-col gap-4">
                     <div className="flex flex-col gap-4">
                         <div className="w-full">
                             <label className="block text-sm font-medium mb-2">Supabase Project URL</label>
-                            <input value={configUrl} onChange={(e) => setConfigUrl(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none" />
+                            <input value={configUrl} onChange={(e) => setConfigUrl(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white" />
                         </div>
                         <div className="w-full">
                             <label className="block text-sm font-medium mb-2">Supabase Anon Key</label>
-                            <input type="password" value={configKey} onChange={(e) => setConfigKey(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none" />
+                            <input type="password" value={configKey} onChange={(e) => setConfigKey(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white" />
                         </div>
                     </div>
-                    <button onClick={handleSaveConfig} className="w-full md:w-auto bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 font-bold">保存配置</button>
+                    <button onClick={handleSaveConfig} className="w-full bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 font-bold">保存配置</button>
                     {saved && <span className="text-green-600 ml-4 font-bold">已保存</span>}
                     
                     <hr className="border-gray-200 dark:border-gray-700" />
@@ -161,14 +162,14 @@ $$ language plpgsql;
             </div>
         );
     }
-    // ... (Rest of Settings.tsx components: theme, account, perms remain similar, just ensuring styles)
+
     if (subPage === 'theme') {
         return (
             <div className="p-8 max-w-4xl mx-auto">
                  <h1 className="text-2xl font-bold mb-6 dark:text-white">应用主题</h1>
                  <div className="bg-white dark:bg-gray-900 p-8 rounded-xl shadow-sm border dark:border-gray-700 flex flex-col md:flex-row gap-4">
-                     <button onClick={() => handleThemeClick('light')} className={`px-6 py-3 rounded-lg border ${currentTheme==='light' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'dark:text-white dark:border-gray-600'}`}>浅色 (Light)</button>
-                     <button onClick={() => handleThemeClick('dark')} className={`px-6 py-3 rounded-lg border ${currentTheme==='dark' ? 'bg-gray-700 border-gray-500 text-white' : 'dark:text-white dark:border-gray-600'}`}>深色 (Dark)</button>
+                     <button onClick={() => handleThemeClick('light')} className={`px-6 py-3 rounded-lg border font-bold ${currentTheme==='light' ? 'bg-blue-50 border-blue-500 text-blue-700' : 'dark:text-white dark:border-gray-600'}`}>浅色 (Light)</button>
+                     <button onClick={() => handleThemeClick('dark')} className={`px-6 py-3 rounded-lg border font-bold ${currentTheme==='dark' ? 'bg-gray-700 border-gray-500 text-white' : 'dark:text-white dark:border-gray-600'}`}>深色 (Dark)</button>
                  </div>
             </div>
         );
@@ -180,8 +181,6 @@ $$ language plpgsql;
     return null;
 };
 
-// ... (Rest of AccountSettings and PermissionsSettings need to be included here as they are in the same file, keeping them mostly same but ensuring 'subordinates' logic is correct per request)
-// Re-inserting the sub-components to ensure file integrity.
 const AccountSettings = () => {
     const user = authService.getCurrentUser();
     const [form, setForm] = useState({ username: '', password: '' });
@@ -229,12 +228,12 @@ const AccountSettings = () => {
                     </div>
                     <div>
                         <label className="block text-sm font-bold mb-1">用户名</label>
-                        <input value={form.username} onChange={e => setForm({...form, username: e.target.value})} className="w-full border p-3 rounded dark:bg-gray-800 dark:border-gray-600"/>
+                        <input value={form.username} onChange={e => setForm({...form, username: e.target.value})} className="w-full border p-3 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/>
                     </div>
                     <div>
                         <label className="block text-sm font-bold mb-1">密码</label>
                         <div className="relative">
-                            <input type={showPass ? "text" : "password"} value={form.password} onChange={e => setForm({...form, password: e.target.value})} className="w-full border p-3 rounded dark:bg-gray-800 dark:border-gray-600 pr-10"/>
+                            <input type={showPass ? "text" : "password"} value={form.password} onChange={e => setForm({...form, password: e.target.value})} className="w-full border p-3 rounded dark:bg-gray-800 dark:border-gray-600 pr-10 dark:text-white"/>
                             <button onClick={() => setShowPass(!showPass)} className="absolute right-3 top-3 text-gray-400"><Icons.ArrowRightLeft size={16}/></button>
                         </div>
                     </div>
@@ -247,8 +246,8 @@ const AccountSettings = () => {
                          {lowerUsers.length === 0 && <div className="p-4 text-center text-gray-400 text-sm">无下级账户</div>}
                          {lowerUsers.map(u => (
                              <button key={u.id} onClick={() => handleSwitch(u)} className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-800 border-b dark:border-gray-800 flex justify-between items-center group">
-                                 <span className="font-bold text-sm">{u.username}</span>
-                                 <span className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-gray-500">Lv.{u.role_level}</span>
+                                 <span className="font-bold text-sm dark:text-white">{u.username}</span>
+                                 <span className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-gray-500 dark:text-gray-300">Lv.{u.role_level}</span>
                              </button>
                          ))}
                      </div>
@@ -259,38 +258,215 @@ const AccountSettings = () => {
 };
 
 const PermissionsSettings = () => {
-    // ... Existing logic, just keeping structure valid
     const currentUser = authService.getCurrentUser();
     const [subordinates, setSubordinates] = useState<User[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
 
+    // Form State for User
+    const [formData, setFormData] = useState<Partial<User>>({});
+    const [hasChanges, setHasChanges] = useState(false);
+
     const loadData = async () => {
         if (!currentUser) return;
         const [users, allStores] = await Promise.all([dataService.getUsers(), dataService.getStores()]);
         let subs: User[] = [];
+        // View Peers logic
         if (currentUser.permissions.view_peers) subs = users.filter(u => u.role_level >= currentUser.role_level);
         else subs = users.filter(u => u.role_level > currentUser.role_level);
+        // View Self Logic
         if (!currentUser.permissions.view_self_in_list) subs = subs.filter(u => u.id !== currentUser.id);
+        
         setSubordinates(subs);
         setStores(allStores);
     };
 
     useEffect(() => { loadData(); }, []);
 
-    // ... Modal component inside (omitted for brevity as it was already provided in prompt context, assume standard implementation)
-    // For this response, I'll return the container.
+    const handleEdit = (user: User | null) => {
+        if (user) {
+            setEditingUser(user);
+            setFormData(JSON.parse(JSON.stringify(user)));
+        } else {
+            setEditingUser(null);
+            setFormData({
+                username: '', password: '123', role_level: (currentUser?.role_level || 0) + 1 as RoleLevel,
+                permissions: JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)),
+                allowed_store_ids: []
+            });
+        }
+        setHasChanges(false);
+        setIsModalOpen(true);
+    };
+
+    const handleChange = (field: string, value: any, nested?: string) => {
+        setHasChanges(true);
+        if (nested) {
+            setFormData(prev => ({
+                ...prev,
+                permissions: { ...prev.permissions!, [field]: value }
+            }));
+        } else {
+            setFormData(prev => ({ ...prev, [field]: value }));
+        }
+    };
+
+    const handleStoreChange = (storeId: string, checked: boolean) => {
+        setHasChanges(true);
+        const current = new Set(formData.allowed_store_ids || []);
+        if (checked) current.add(storeId); else current.delete(storeId);
+        setFormData(prev => ({ ...prev, allowed_store_ids: Array.from(current) }));
+    };
+
+    const handleSave = async () => {
+        if (!formData.username) return alert("用户名必填");
+        if (Number(formData.role_level) <= (currentUser?.role_level || 0) && currentUser?.role_level !== 0) return alert("只能创建/修改等级比自己低的用户");
+
+        try {
+            if (editingUser) {
+                await dataService.updateUser(editingUser.id, formData);
+            } else {
+                await dataService.createUser(formData as any);
+            }
+            setIsModalOpen(false);
+            loadData();
+        } catch(e: any) { alert(e.message); }
+    };
+
+    const handleDeleteUser = async (uid: string) => {
+        if(confirm("确定删除该用户？(软删除)")) {
+            await dataService.deleteUser(uid);
+            loadData();
+        }
+    };
+
     return (
         <div className="p-4 md:p-8 max-w-6xl mx-auto dark:text-gray-100">
              <div className="flex justify-between items-center mb-6">
                  <h1 className="text-2xl font-bold">权限设置</h1>
-                 {/* ... */}
+                 <button onClick={() => handleEdit(null)} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded-lg font-bold flex items-center gap-2">
+                     <Icons.Plus size={20}/> 新增用户
+                 </button>
              </div>
+
              <div className="bg-white dark:bg-gray-900 rounded-xl border dark:border-gray-700 overflow-hidden shadow-sm">
-                 {/* ... List ... */}
-                 <div className="p-8 text-center text-gray-500">请使用大屏幕设备进行详细权限配置，或参考电脑端视图。</div>
+                 <table className="w-full text-left">
+                     <thead className="bg-gray-50 dark:bg-gray-800 border-b dark:border-gray-700">
+                         <tr>
+                             <th className="p-4">用户</th>
+                             <th className="p-4">等级</th>
+                             <th className="p-4">门店范围</th>
+                             <th className="p-4">日志权限</th>
+                             <th className="p-4 text-right">操作</th>
+                         </tr>
+                     </thead>
+                     <tbody className="divide-y dark:divide-gray-700">
+                         {subordinates.map(u => (
+                             <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                                 <td className="p-4 font-bold">{u.username}</td>
+                                 <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
+                                 <td className="p-4 text-sm">{u.permissions.store_scope === 'GLOBAL' ? '全局' : `受限 (${u.allowed_store_ids.length})`}</td>
+                                 <td className="p-4 text-sm">{u.permissions.logs_level === 'A' ? 'A (系统)' : u.permissions.logs_level === 'B' ? 'B (下级)' : 'C (仅自己)'}</td>
+                                 <td className="p-4 text-right space-x-2">
+                                     <button onClick={() => handleEdit(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
+                                     <button onClick={() => handleDeleteUser(u.id)} className="text-red-600 font-bold hover:underline">删除</button>
+                                 </td>
+                             </tr>
+                         ))}
+                     </tbody>
+                 </table>
              </div>
+
+             {isModalOpen && formData && (
+                 <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+                     <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
+                         <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center">
+                             <h2 className="text-xl font-bold">{editingUser ? '编辑用户' : '新增用户'}</h2>
+                             <button onClick={() => setIsModalOpen(false)}><Icons.Minus size={24}/></button>
+                         </div>
+                         <div className="p-6 space-y-6 flex-1">
+                             {/* Basic Info */}
+                             <div className="space-y-4">
+                                 <h3 className="font-bold border-b dark:border-gray-700 pb-2">基本属性</h3>
+                                 <div className="grid grid-cols-2 gap-4">
+                                     <div>
+                                         <label className="block text-sm font-bold mb-1">用户名</label>
+                                         <input value={formData.username} onChange={e => handleChange('username', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600"/>
+                                     </div>
+                                     <div>
+                                         <label className="block text-sm font-bold mb-1">密码</label>
+                                         <input value={formData.password} onChange={e => handleChange('password', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600"/>
+                                     </div>
+                                     <div>
+                                         <label className="block text-sm font-bold mb-1">管理等级 (数值越大权限越低)</label>
+                                         <input type="number" min={(currentUser?.role_level||0)+1} max="9" value={formData.role_level} onChange={e => handleChange('role_level', Number(e.target.value))} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600"/>
+                                     </div>
+                                 </div>
+                             </div>
+
+                             {/* Permission Matrix */}
+                             <div className="space-y-4">
+                                 <h3 className="font-bold border-b dark:border-gray-700 pb-2">功能权限矩阵</h3>
+                                 
+                                 {/* Logs */}
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                     <label className="block font-bold mb-2">日志权限</label>
+                                     <div className="space-y-2">
+                                         <label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'A'} onChange={() => handleChange('logs_level', 'A', 'perm')} /> A级：查看系统级 + 任意撤销</label>
+                                         <label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'B'} onChange={() => handleChange('logs_level', 'B', 'perm')} /> B级：查看/撤销下级记录</label>
+                                         <label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'C'} onChange={() => handleChange('logs_level', 'C', 'perm')} /> C级：仅查看/撤销自己</label>
+                                     </div>
+                                 </div>
+
+                                 {/* Announcement */}
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                     <label className="block font-bold mb-2">公告权限</label>
+                                     <div className="space-x-4">
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'PUBLISH'} onChange={() => handleChange('announcement_rule', 'PUBLISH', 'perm')} /> 发布公告</label>
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'VIEW'} onChange={() => handleChange('announcement_rule', 'VIEW', 'perm')} /> 仅接收</label>
+                                     </div>
+                                 </div>
+
+                                 {/* Store Scope */}
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                     <label className="block font-bold mb-2">门店范围 (数据隔离)</label>
+                                     <div className="space-x-4 mb-3">
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'GLOBAL'} onChange={() => handleChange('store_scope', 'GLOBAL', 'perm')} /> 全局模式</label>
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'LIMITED'} onChange={() => handleChange('store_scope', 'LIMITED', 'perm')} /> 受限模式</label>
+                                     </div>
+                                     {formData.permissions?.store_scope === 'LIMITED' && (
+                                         <div className="pl-4 border-l-2 border-blue-500 grid grid-cols-2 gap-2">
+                                             {stores.map(s => (
+                                                 <label key={s.id} className="flex items-center gap-2">
+                                                     <input type="checkbox" checked={formData.allowed_store_ids?.includes(s.id)} onChange={(e) => handleStoreChange(s.id, e.target.checked)} />
+                                                     {s.name}
+                                                 </label>
+                                             ))}
+                                         </div>
+                                     )}
+                                 </div>
+                                 
+                                 {/* Misc */}
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded grid grid-cols-2 gap-4">
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.show_excel} onChange={(e) => handleChange('show_excel', e.target.checked, 'perm')} /> 显示 Excel 导出</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_peers} onChange={(e) => handleChange('view_peers', e.target.checked, 'perm')} /> 可见同级用户</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_self_in_list} onChange={(e) => handleChange('view_self_in_list', e.target.checked, 'perm')} /> 列表显示自己</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_perm_page} onChange={(e) => handleChange('hide_perm_page', e.target.checked, 'perm')} /> 隐藏“权限设置”页</label>
+                                 </div>
+                                 
+                                 <div className="text-gray-500 text-xs mt-2">
+                                     * 删除模式：系统强制执行“全员全操作软删除”，不可配置。
+                                 </div>
+                             </div>
+                         </div>
+                         <div className="p-6 border-t dark:border-gray-700 flex justify-end gap-4 bg-gray-50 dark:bg-gray-800">
+                             <button onClick={() => setIsModalOpen(false)} className="px-6 py-2 text-gray-500 font-bold">取消</button>
+                             <button disabled={!hasChanges} onClick={handleSave} className={`px-6 py-2 rounded font-bold text-white transition-colors ${hasChanges ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'}`}>保存</button>
+                         </div>
+                     </div>
+                 </div>
+             )}
         </div>
     );
 };

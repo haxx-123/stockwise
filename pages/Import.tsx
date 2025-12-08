@@ -1,4 +1,5 @@
 
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
@@ -18,11 +19,10 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
     
     // --- EXCEL STATE ---
     const [fileData, setFileData] = useState<any[]>([]);
-    const [headers, setHeaders] = useState<string[]>([]);
+    const [headers, setHeaders] = useState<string[]>([]); // F0, F1...
     const [mapping, setMapping] = useState<Record<string, string>>({});
     const [step, setStep] = useState(1);
     const [logs, setLogs] = useState<string[]>([]);
-    // Removed local availableStores state, purely rely on currentStore
 
     // --- MANUAL STATE ---
     const [manualForm, setManualForm] = useState({
@@ -78,9 +78,6 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
     // --- LOGIC ---
     const getTargetStoreId = () => {
         // Strict Isolation: Use Global Store context
-        // If 'all', and user is admin, they should select a store.
-        // But prompt says: "Follow the top-right current store status".
-        // If top right is 'all', import is ambiguous.
         if (currentStore === 'all') return null;
         return currentStore;
     };
@@ -99,10 +96,14 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                 const bstr = evt.target?.result;
                 const wb = (window.XLSX).read(bstr, { type: 'binary' });
                 const ws = wb.Sheets[wb.SheetNames[0]];
-                const data = (window.XLSX).utils.sheet_to_json(ws, { header: 1 }); 
+                const data = (window.XLSX).utils.sheet_to_json(ws, { header: 1 }); // Array of arrays
                 if (data.length < 1) return alert("Excel 为空");
+                
+                // Use "F0, F1, F2" style headers
                 const maxCols = data.reduce((max: number, row: any) => Math.max(max, row.length), 0);
-                setHeaders(Array.from({length: maxCols}, (_, i) => `F${i}`));
+                const generatedHeaders = Array.from({length: maxCols}, (_, i) => `F${i}`);
+                
+                setHeaders(generatedHeaders);
                 setFileData(data); 
                 setStep(2);
                 setMapping({});
@@ -133,11 +134,16 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
             let success = 0;
 
             const getValue = (row: any[], field: string) => {
-                const colIndex = parseInt(mapping[field]?.substring(1) || '-1');
-                return colIndex > -1 ? row[colIndex] : null;
+                const colHeader = mapping[field];
+                if (!colHeader) return null;
+                const colIndex = parseInt(colHeader.substring(1)); // "F0" -> 0
+                return row[colIndex];
             };
 
             for (const row of fileData) {
+                // Skip empty rows or header rows if user mapped something but row is string
+                // Actually header: 1 returns array of arrays.
+                
                 const name = sanitizeStr(getValue(row, 'name'));
                 const batch = sanitizeStr(getValue(row, 'batch'));
                 const qty = sanitizeInt(getValue(row, 'quantity'));
@@ -166,7 +172,8 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                     store_id: targetId,
                     batch_number: batch,
                     quantity: qty,
-                    expiry_date: getValue(row, 'expiry') ? new Date(getValue(row, 'expiry')).toISOString() : null
+                    expiry_date: getValue(row, 'expiry') ? new Date(getValue(row, 'expiry')).toISOString() : null,
+                    is_archived: false
                 });
 
                 txToInsert.push({
@@ -185,8 +192,12 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
             }
 
             if (productsToUpsert.length > 0) {
+                 // Upsert based on name + store_id uniqueness constraint? 
+                 // Supabase generic upsert might conflict if constraint not set. 
+                 // Assuming app logic handles it or unique index exists.
+                 // Ideally: productsToUpsert should filter distinct names first
                  const unique = Array.from(new Map(productsToUpsert.map(p => [p.name, p])).values());
-                 await client.from('products').upsert(unique, { onConflict: 'name,bound_store_id' as any });
+                 await client.from('products').upsert(unique); 
             }
             if (batchesToInsert.length > 0) {
                 await client.from('batches').insert(batchesToInsert);
@@ -226,7 +237,8 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                      unit_name: manualForm.unit_name,
                      split_unit_name: sanitizeStr(manualForm.split_unit_name),
                      split_ratio: manualForm.split_ratio,
-                     bound_store_id: targetId 
+                     bound_store_id: targetId,
+                     is_archived: false
                  }).select().single();
                  if (error) throw error;
                  product = newProd;
@@ -241,7 +253,8 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                  store_id: targetId,
                  batch_number: manualForm.batch_number,
                  quantity: qty,
-                 expiry_date: manualForm.expiry_date ? new Date(manualForm.expiry_date).toISOString() : null
+                 expiry_date: manualForm.expiry_date ? new Date(manualForm.expiry_date).toISOString() : null,
+                 is_archived: false
              });
 
              await client.from('transactions').insert({
@@ -273,8 +286,8 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
              <div className="flex justify-between items-center mb-6">
                  <h1 className="text-2xl font-bold text-gray-800 dark:text-white">商品导入</h1>
                  <div className="flex items-center gap-4 bg-gray-100 dark:bg-gray-800 p-1 rounded-lg">
-                     <button onClick={() => setMode('EXCEL')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${mode === 'EXCEL' ? 'bg-white dark:bg-gray-700 shadow text-blue-600' : 'text-gray-500'}`}>Excel 批量</button>
-                     <button onClick={() => setMode('MANUAL')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${mode === 'MANUAL' ? 'bg-white dark:bg-gray-700 shadow text-blue-600' : 'text-gray-500'}`}>手动录入</button>
+                     <button onClick={() => setMode('EXCEL')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${mode === 'EXCEL' ? 'bg-white dark:bg-gray-700 shadow text-blue-600 dark:text-white' : 'text-gray-500'}`}>Excel 批量</button>
+                     <button onClick={() => setMode('MANUAL')} className={`px-4 py-2 rounded-md text-sm font-bold transition-all ${mode === 'MANUAL' ? 'bg-white dark:bg-gray-700 shadow text-blue-600 dark:text-white' : 'text-gray-500'}`}>手动录入</button>
                  </div>
              </div>
              
@@ -296,12 +309,13 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                     )}
                     {step === 2 && (
                         <div className="bg-white dark:bg-gray-900 p-6 rounded-xl border dark:border-gray-700 shadow-sm">
-                            <h3 className="text-lg font-bold mb-4">字段映射 (F0, F1...)</h3>
+                            <h3 className="text-lg font-bold mb-4">字段映射 (F0=第一列, F1=第二列...)</h3>
+                            <p className="text-xs text-gray-500 mb-4">请将下方的系统字段与您 Excel 中的列号(F0, F1...)对应。F0 代表 Excel 的第一列。</p>
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                                 {Object.keys(FIELD_LABELS).map(key => (
                                     <div key={key} className="space-y-1">
                                         <label className={`text-sm font-bold ${REQUIRED_FIELDS.includes(key) ? 'text-red-500' : 'text-gray-600 dark:text-gray-300'}`}>{FIELD_LABELS[key]}</label>
-                                        <select className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600" value={mapping[key] || ''} onChange={e => setMapping({...mapping, [key]: e.target.value})}>
+                                        <select className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={mapping[key] || ''} onChange={e => setMapping({...mapping, [key]: e.target.value})}>
                                             <option value="">(忽略)</option>
                                             {headers.map(h => <option key={h} value={h}>{h}</option>)}
                                         </select>
@@ -316,7 +330,7 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                     )}
                     {step === 3 && (
                         <div className="bg-white dark:bg-gray-900 p-8 rounded-xl text-center">
-                            <p className="font-bold">处理中...</p>
+                            <p className="font-bold dark:text-white">处理中...</p>
                             <div className="mt-4 text-left bg-black text-green-400 p-4 rounded h-48 overflow-y-auto font-mono text-xs">
                                 {logs.map((l,i) => <div key={i}>{l}</div>)}
                             </div>
@@ -327,19 +341,33 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
              )}
 
              {currentStore !== 'all' && mode === 'MANUAL' && (
-                 <div className="bg-white dark:bg-gray-900 p-8 rounded-xl border dark:border-gray-700 shadow-sm max-w-3xl mx-auto space-y-4">
-                     {/* Manual Form Inputs - Similar to before but simplified layout */}
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        <div><label className="text-sm font-bold">名称 *</label><input className="w-full border p-2 rounded dark:bg-gray-800" value={manualForm.name} onChange={e=>setManualForm({...manualForm, name: e.target.value})}/></div>
-                        <div><label className="text-sm font-bold">数量 *</label><input type="number" className="w-full border p-2 rounded dark:bg-gray-800" value={manualForm.quantity} onChange={e=>setManualForm({...manualForm, quantity: Number(e.target.value)})}/></div>
+                 <div className="bg-white dark:bg-gray-900 p-8 rounded-xl border dark:border-gray-700 shadow-sm max-w-4xl mx-auto space-y-6">
+                     <h3 className="font-bold border-b dark:border-gray-700 pb-2 mb-4 dark:text-white">完整商品录入</h3>
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <div className="md:col-span-2"><label className="text-sm font-bold dark:text-gray-300">商品名称 *</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.name} onChange={e=>setManualForm({...manualForm, name: e.target.value})}/></div>
+                        <div><label className="text-sm font-bold dark:text-gray-300">SKU</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.sku} onChange={e=>setManualForm({...manualForm, sku: e.target.value})}/></div>
                      </div>
-                     {/* ... (Other inputs kept concise for brevity, logic exists in state) */}
-                     <div className="relative">
-                         <label className="text-sm font-bold">批号 *</label>
-                         <div className="flex"><input className="w-full border p-2 rounded-l dark:bg-gray-800" value={manualForm.batch_number} onChange={e=>setManualForm({...manualForm, batch_number: e.target.value})} /><button onClick={startScanner} className="bg-gray-200 px-3 border dark:bg-gray-700"><Icons.Store size={18}/></button></div>
+                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div><label className="text-sm font-bold dark:text-gray-300">类别</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.category} onChange={e=>setManualForm({...manualForm, category: e.target.value})}/></div>
+                        <div><label className="text-sm font-bold dark:text-gray-300">大单位</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.unit_name} onChange={e=>setManualForm({...manualForm, unit_name: e.target.value})}/></div>
+                        <div><label className="text-sm font-bold dark:text-gray-300">小单位</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.split_unit_name} onChange={e=>setManualForm({...manualForm, split_unit_name: e.target.value})}/></div>
+                        <div><label className="text-sm font-bold dark:text-gray-300">换算率</label><input type="number" className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.split_ratio} onChange={e=>setManualForm({...manualForm, split_ratio: Number(e.target.value)})}/></div>
                      </div>
+                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 dark:bg-gray-800 p-4 rounded border dark:border-gray-700">
+                         <div>
+                             <label className="text-sm font-bold dark:text-gray-300">批号 *</label>
+                             <div className="flex gap-2">
+                                <input className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={manualForm.batch_number} onChange={e=>setManualForm({...manualForm, batch_number: e.target.value})} />
+                                <button onClick={startScanner} className="bg-white dark:bg-gray-600 px-3 border dark:border-gray-500 rounded"><Icons.Scan size={18}/></button>
+                             </div>
+                         </div>
+                         <div><label className="text-sm font-bold dark:text-gray-300">数量 *</label><input type="number" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={manualForm.quantity} onChange={e=>setManualForm({...manualForm, quantity: Number(e.target.value)})}/></div>
+                         <div><label className="text-sm font-bold dark:text-gray-300">有效期</label><input type="date" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={manualForm.expiry_date} onChange={e=>setManualForm({...manualForm, expiry_date: e.target.value})}/></div>
+                     </div>
+
                      <div className={`${isScanning ? 'block' : 'hidden'} p-2 bg-black rounded`}><div id="import-reader"></div><button onClick={stopScanner} className="w-full bg-red-600 text-white mt-2">停止</button></div>
-                     <button onClick={handleManualSubmit} className="w-full py-3 bg-blue-600 text-white rounded font-bold mt-4">保存</button>
+                     
+                     <button onClick={handleManualSubmit} className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-bold shadow-lg text-lg">保存并入库</button>
                  </div>
              )}
         </div>

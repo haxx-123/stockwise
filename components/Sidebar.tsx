@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { Icons } from './Icons';
 import { authService } from '../services/authService';
@@ -46,6 +47,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
         >
           <item.icon size={isMobile ? 24 : 20} />
           <span className={isMobile ? 'text-[10px]' : 'font-medium'}>{item.label}</span>
+          {/* Unread dot logic if needed for specific menu items */}
         </button>
     );
   };
