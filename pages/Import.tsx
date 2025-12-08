@@ -1,9 +1,11 @@
 
+
+
 import React, { useState, useRef, useEffect } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
 import { isConfigured, getSupabaseClient } from '../services/supabaseClient';
-import { sanitizeInt, sanitizeStr, DEFAULT_IMPORT_RATIO } from '../utils/formatters';
+import { sanitizeInt, sanitizeStr, DEFAULT_IMPORT_RATIO, DEFAULT_SPLIT_UNIT } from '../utils/formatters';
 import { authService } from '../services/authService';
 
 declare const window: any;
@@ -26,15 +28,18 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
     // --- MANUAL STATE ---
     const [manualForm, setManualForm] = useState({
         name: '', sku: '', category: '', 
-        unit_name: '件', split_unit_name: '', split_ratio: 10,
-        batch_number: '', quantity: 0, expiry_date: ''
+        unit_name: '件', split_unit_name: DEFAULT_SPLIT_UNIT, split_ratio: 10,
+        batch_number: '', 
+        qty_big: 0, 
+        qty_small: 0,
+        expiry_date: ''
     });
 
     const [isScanning, setIsScanning] = useState(false);
     const scannerRef = useRef<any>(null);
 
     const FIELD_LABELS: Record<string, string> = {
-        name: '商品名称', batch: '批号', quantity: '数量',
+        name: '商品名称', batch: '批号', quantity: '数量 (总小单位)',
         sku: 'SKU', category: '类别', 
         unit: '大单位', split_unit: '小单位', ratio: '换算率', expiry: '有效期'
     };
@@ -153,7 +158,7 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                         sku: sanitizeStr(getValue(row, 'sku')),
                         category: sanitizeStr(getValue(row, 'category')),
                         unit_name: sanitizeStr(getValue(row, 'unit')) || '件',
-                        split_unit_name: sanitizeStr(getValue(row, 'split_unit')),
+                        split_unit_name: sanitizeStr(getValue(row, 'split_unit')) || DEFAULT_SPLIT_UNIT,
                         split_ratio: sanitizeInt(getValue(row, 'ratio')) || DEFAULT_IMPORT_RATIO,
                         bound_store_id: targetId // Strict Binding
                     });
@@ -205,7 +210,10 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
     };
 
     const handleManualSubmit = async () => {
-        if (!manualForm.name || !manualForm.batch_number || !manualForm.quantity) return alert("请填写必填项");
+        if (!manualForm.name || !manualForm.batch_number) return alert("请填写商品名和批号");
+        // Quantity Big is required (can be 0), Small is optional default 0
+        if (manualForm.qty_big === undefined || manualForm.qty_big === null) return alert("请填写大单位数量");
+        
         const targetId = getTargetStoreId();
         if (!targetId) return alert("请在右上角切换到具体门店。");
 
@@ -234,15 +242,18 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                  product = newProd;
              }
 
+             // Calculate total split quantity
+             const ratio = product.split_ratio || 10;
+             const totalQty = (Number(manualForm.qty_big) * ratio) + Number(manualForm.qty_small);
+
              const batchId = crypto.randomUUID();
-             const qty = Number(manualForm.quantity);
              
              await client.from('batches').insert({
                  id: batchId,
                  product_id: product.id,
                  store_id: targetId,
                  batch_number: manualForm.batch_number,
-                 quantity: qty,
+                 quantity: totalQty,
                  expiry_date: manualForm.expiry_date ? new Date(manualForm.expiry_date).toISOString() : null,
                  is_archived: false
              });
@@ -253,8 +264,8 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                  product_id: product.id,
                  store_id: targetId,
                  batch_id: batchId,
-                 quantity: qty,
-                 balance_after: qty,
+                 quantity: totalQty,
+                 balance_after: totalQty,
                  timestamp: new Date().toISOString(),
                  note: '手动导入',
                  operator: user?.username || 'Manual'
@@ -264,8 +275,8 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
              alert("导入成功");
              setManualForm({
                 name: '', sku: '', category: '', 
-                unit_name: '件', split_unit_name: '', split_ratio: 10,
-                batch_number: '', quantity: 0, expiry_date: ''
+                unit_name: '件', split_unit_name: DEFAULT_SPLIT_UNIT, split_ratio: 10,
+                batch_number: '', qty_big: 0, qty_small: 0, expiry_date: ''
              });
 
         } catch(e: any) { alert(e.message); }
@@ -298,7 +309,7 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                         </div>
                     )}
                     {step === 2 && (
-                        <div className="bg-white dark:bg-gray-900 p-6 rounded-xl border dark:border-gray-700 shadow-sm">
+                        <div className="bg-white dark:bg-gray-900 p-6 rounded-xl border dark:border-gray-700 shadow-sm max-w-[100vw]">
                             <h3 className="text-lg font-bold mb-4">字段映射</h3>
                             
                             {/* PREVIEW TABLE */}
@@ -353,8 +364,7 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
              )}
 
              {currentStore !== 'all' && mode === 'MANUAL' && (
-                 <div className="bg-white dark:bg-gray-900 p-8 rounded-xl border dark:border-gray-700 shadow-sm max-w-4xl mx-auto space-y-6">
-                     {/* Manual form existing code ... */}
+                 <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl border dark:border-gray-700 shadow-sm max-w-4xl mx-auto space-y-6 max-w-[100vw]">
                      <h3 className="font-bold border-b dark:border-gray-700 pb-2 mb-4 dark:text-white">完整商品录入</h3>
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="md:col-span-2"><label className="text-sm font-bold dark:text-gray-300">商品名称 *</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.name} onChange={e=>setManualForm({...manualForm, name: e.target.value})}/></div>
@@ -366,16 +376,21 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                         <div><label className="text-sm font-bold dark:text-gray-300">小单位</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.split_unit_name} onChange={e=>setManualForm({...manualForm, split_unit_name: e.target.value})}/></div>
                         <div><label className="text-sm font-bold dark:text-gray-300">换算率</label><input type="number" className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.split_ratio} onChange={e=>setManualForm({...manualForm, split_ratio: Number(e.target.value)})}/></div>
                      </div>
-                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-gray-50 dark:bg-gray-800 p-4 rounded border dark:border-gray-700">
-                         <div>
-                             <label className="text-sm font-bold dark:text-gray-300">批号 *</label>
-                             <div className="flex gap-2">
-                                <input className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={manualForm.batch_number} onChange={e=>setManualForm({...manualForm, batch_number: e.target.value})} />
-                                <button onClick={startScanner} className="bg-white dark:bg-gray-600 px-3 border dark:border-gray-500 rounded"><Icons.Scan size={18}/></button>
+                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded border dark:border-gray-700">
+                         <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                             <div>
+                                 <label className="text-sm font-bold dark:text-gray-300">批号 *</label>
+                                 <div className="flex gap-2">
+                                    <input className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={manualForm.batch_number} onChange={e=>setManualForm({...manualForm, batch_number: e.target.value})} />
+                                    <button onClick={startScanner} className="bg-white dark:bg-gray-600 px-3 border dark:border-gray-500 rounded"><Icons.Scan size={18}/></button>
+                                 </div>
                              </div>
+                             <div><label className="text-sm font-bold dark:text-gray-300">有效期</label><input type="date" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={manualForm.expiry_date} onChange={e=>setManualForm({...manualForm, expiry_date: e.target.value})}/></div>
                          </div>
-                         <div><label className="text-sm font-bold dark:text-gray-300">数量 *</label><input type="number" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={manualForm.quantity} onChange={e=>setManualForm({...manualForm, quantity: Number(e.target.value)})}/></div>
-                         <div><label className="text-sm font-bold dark:text-gray-300">有效期</label><input type="date" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={manualForm.expiry_date} onChange={e=>setManualForm({...manualForm, expiry_date: e.target.value})}/></div>
+                         <div className="grid grid-cols-2 gap-4">
+                             <div><label className="text-sm font-bold dark:text-gray-300 text-blue-600">数量 ({manualForm.unit_name}) *</label><input type="number" min="0" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white font-bold" value={manualForm.qty_big} onChange={e=>setManualForm({...manualForm, qty_big: Number(e.target.value)})}/></div>
+                             <div><label className="text-sm font-bold dark:text-gray-300 text-green-600">数量 ({manualForm.split_unit_name})</label><input type="number" min="0" className="w-full border p-2 rounded dark:bg-gray-700 dark:border-gray-600 dark:text-white font-bold" value={manualForm.qty_small} onChange={e=>setManualForm({...manualForm, qty_small: Number(e.target.value)})}/></div>
+                         </div>
                      </div>
 
                      <div className={`${isScanning ? 'block' : 'hidden'} p-2 bg-black rounded`}><div id="import-reader"></div><button onClick={stopScanner} className="w-full bg-red-600 text-white mt-2">停止</button></div>

@@ -1,6 +1,8 @@
 
 
 
+
+
 import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel } from '../types';
 import { getSupabaseClient } from './supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from './authService';
@@ -318,29 +320,12 @@ class DataService {
 
     const logLevel = user.permissions.logs_level;
 
-    if (logLevel === 'A') {
+    if (logLevel === 'A' || logLevel === 'B' || logLevel === 'C') {
         return allTransactions;
-    } else if (logLevel === 'C') {
+    } else {
+        // Level D: Only see Self
         return allTransactions.filter(t => t.operator === user.username);
-    } else if (logLevel === 'B') {
-        // Self + Lower Level Users
-        const { data: allUsers } = await client.from('users').select('username, role_level');
-        if (!allUsers) return allTransactions.filter(t => t.operator === user.username);
-
-        const userLevelMap = new Map<string, number>();
-        allUsers.forEach(u => userLevelMap.set(u.username, u.role_level));
-
-        const myLevel = user.role_level;
-
-        return allTransactions.filter(t => {
-            if (t.operator === user.username) return true;
-            const targetLevel = userLevelMap.get(t.operator || '');
-            // Lower Level means Higher Number
-            return targetLevel !== undefined && targetLevel > myLevel;
-        });
     }
-
-    return [];
   }
 
   async getAuditLogs(limit = 100): Promise<AuditLog[]> {
@@ -580,11 +565,28 @@ class DataService {
       if (!tx) throw new Error("记录不存在");
 
       const user = authService.getCurrentUser();
-      const p = user?.permissions;
+      if (!user) return;
+      const p = user.permissions;
       
-      if (p?.logs_level === 'C' && tx.operator !== user?.username) {
-          throw new Error("权限不足: 只能撤销自己的操作");
+      // Permission Checks
+      if (p.logs_level === 'D') {
+          if (tx.operator !== user.username) throw new Error("权限不足: D级用户只能撤销自己的操作");
       }
+      else if (p.logs_level === 'C') {
+          if (tx.operator !== user.username) throw new Error("权限不足: C级用户只能撤销自己的操作");
+      }
+      else if (p.logs_level === 'B') {
+          // B Level: Can undo self OR lower level
+          if (tx.operator !== user.username) {
+              const { data: opUser } = await client.from('users').select('role_level').eq('username', tx.operator).single();
+              // If operator is found and has equal/higher level (lower number), Deny
+              // Note: role_level 0 is highest. so if opUser.level <= myLevel, deny.
+              if (opUser && opUser.role_level <= user.role_level) {
+                  throw new Error("权限不足: B级用户只能撤销低等级用户的操作");
+              }
+          }
+      }
+      // A Level: Undo Any (No check needed)
 
       await this.logClientAction('UNDO_TRANSACTION', { transactionId });
       await client.from('transactions').update({ is_undone: true }).eq('id', transactionId);

@@ -1,6 +1,8 @@
 
 
 
+
+
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { Transaction, User } from '../types';
@@ -76,7 +78,7 @@ export const Logs: React.FC = () => {
     const paginatedLogs = filteredLogs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
     return (
-        <div className="p-4 md:p-8 max-w-6xl mx-auto">
+        <div className="p-4 md:p-8 max-w-6xl mx-auto max-w-[100vw]">
             <h1 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">操作日志</h1>
             <div className="flex gap-2 overflow-x-auto pb-2 mb-4 custom-scrollbar">
                  {['ALL', 'IN', 'OUT', 'ADJUST', 'DELETE', 'IMPORT'].map(f => (
@@ -96,8 +98,8 @@ export const Logs: React.FC = () => {
                         {paginatedLogs.map(log => (
                             <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                                 <td className="p-4 text-gray-500">{new Date(log.timestamp).toLocaleString()}</td>
-                                <td className={`p-4 font-bold ${getUserColor(userMap.get(log.operator || ''))}`}>{log.operator}</td>
-                                <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${getLogColor(log.type)} bg-gray-100 dark:bg-gray-900`}>{typeLabel(log.type)}</span></td>
+                                <td className={`p-4 ${getUserColor(userMap.get(log.operator || ''))}`}>{log.operator}</td>
+                                <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${getLogColor(log.type)}`}>{typeLabel(log.type)}</span></td>
                                 <td className="p-4">{renderContent(log)}</td>
                                 <td className="p-4 text-right">{renderQty(log)}</td>
                                 <td className="p-4 text-right"><button onClick={()=>handleUndo(log.id)} className="text-xs text-red-500 hover:underline font-bold">撤销</button></td>
@@ -114,11 +116,14 @@ export const Logs: React.FC = () => {
                         <div className="flex flex-col gap-1">
                             <div className="text-[10px] text-gray-400">{new Date(log.timestamp).toLocaleString()}</div>
                             <div className="flex items-center gap-2">
-                                <span className={`text-xs font-bold px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 ${getLogColor(log.type)}`}>{typeLabel(log.type)}</span>
-                                <span className="text-sm font-bold dark:text-white">{log.type === 'ADJUST' || log.type === 'DELETE' ? (log.product?.name || '属性变更') : log.product?.name}</span>
+                                <span className={`text-xs font-bold px-1.5 py-0.5 rounded ${getLogColor(log.type)}`}>{typeLabel(log.type)}</span>
+                                <span className="text-sm font-bold dark:text-white truncate max-w-[120px]">{log.type === 'ADJUST' || log.type === 'DELETE' ? (log.product?.name || '属性变更') : log.product?.name}</span>
                             </div>
                         </div>
-                        <div>{renderQty(log)}</div>
+                        <div className="flex flex-col items-end">
+                            {renderQty(log)}
+                            <span className={`text-xs ${getUserColor(userMap.get(log.operator || ''))}`}>{log.operator}</span>
+                        </div>
                     </div>
                 ))}
             </div>
@@ -143,7 +148,7 @@ export const Logs: React.FC = () => {
                              <div className="grid grid-cols-2 gap-4 text-sm dark:text-gray-300">
                                  <div><label className="block text-gray-500 text-xs">时间</label>{new Date(detailLog.timestamp).toLocaleString()}</div>
                                  <div><label className="block text-gray-500 text-xs">操作人</label><span className={getUserColor(userMap.get(detailLog.operator||''))}>{detailLog.operator}</span></div>
-                                 <div><label className="block text-gray-500 text-xs">类型</label><span className={getLogColor(detailLog.type)}>{typeLabel(detailLog.type)}</span></div>
+                                 <div><label className="block text-gray-500 text-xs">类型</label><span className={`px-2 py-0.5 rounded ${getLogColor(detailLog.type)}`}>{typeLabel(detailLog.type)}</span></div>
                                  <div><label className="block text-gray-500 text-xs">数量变动</label>{renderQty(detailLog)}</div>
                              </div>
                         </div>

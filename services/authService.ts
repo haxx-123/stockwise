@@ -1,15 +1,18 @@
 
+
 import { User, RoleLevel, UserPermissions } from '../types';
 import { dataService } from './dataService';
 
 export const DEFAULT_PERMISSIONS: UserPermissions = {
-    logs_level: 'C',
+    logs_level: 'D', // Default to strict
     announcement_rule: 'VIEW',
     store_scope: 'LIMITED',
     show_excel: false,
     view_peers: false,
     view_self_in_list: true,
     hide_perm_page: false,
+    hide_audit_hall: true,
+    hide_store_management: true,
     only_view_config: false
 };
 
@@ -27,6 +30,8 @@ export const DEFAULT_ADMIN: User = {
         view_peers: true,
         view_self_in_list: true,
         hide_perm_page: false,
+        hide_audit_hall: false,
+        hide_store_management: false,
         only_view_config: false
     },
     allowed_store_ids: []
@@ -63,8 +68,8 @@ class AuthService {
             const user = users.find(u => u.username === username && u.password === passwordInput);
             
             if (user) {
-                // Ensure permissions object exists
-                if (!user.permissions) user.permissions = DEFAULT_PERMISSIONS;
+                // Ensure permissions object exists and has defaults for new fields
+                user.permissions = { ...DEFAULT_PERMISSIONS, ...user.permissions };
                 
                 this.currentUser = user;
                 this.setSession(user);
@@ -100,8 +105,9 @@ class AuthService {
     get permissions() {
         const p = this.currentUser?.permissions || DEFAULT_PERMISSIONS;
         return {
-            can_see_system_logs: p.logs_level === 'A',
-            can_see_subordinate_logs: p.logs_level === 'A' || p.logs_level === 'B',
+            can_see_system_logs: p.logs_level === 'A' || p.logs_level === 'B' || p.logs_level === 'C',
+            can_manage_audit: !p.hide_audit_hall,
+            can_manage_stores: !p.hide_store_management,
             can_publish_announcements: p.announcement_rule === 'PUBLISH',
             is_global_store: p.store_scope === 'GLOBAL',
             can_export_excel: p.show_excel,

@@ -1,7 +1,9 @@
 
+
 import { Product, RoleLevel } from '../types';
 
 export const DEFAULT_IMPORT_RATIO = 10;
+export const DEFAULT_SPLIT_UNIT = '条';
 
 export const ph = (value: any) => {
   if (value === null || value === undefined || value === '') return '/';
@@ -23,22 +25,20 @@ export const sanitizeInt = (val: any): number | null => {
 
 export const formatUnit = (quantity: number, product: Product) => {
   if (quantity === undefined || quantity === null) return '/';
-  // Fallback to Big Unit if split info missing
-  if (!product.split_ratio || !product.split_unit_name) {
-    return `${quantity} ${product.unit_name || '个'}`;
+  
+  const unitName = product.unit_name || '件';
+  const splitUnitName = product.split_unit_name || DEFAULT_SPLIT_UNIT;
+  
+  // Fallback if split info missing, treat as Big Unit only
+  if (!product.split_ratio) {
+    return `${quantity}${unitName} 0${splitUnitName}`;
   }
 
   const ratio = product.split_ratio;
   const major = Math.floor(quantity / ratio);
   const minor = quantity % ratio;
 
-  if (major === 0 && minor === 0) return "0";
-
-  let result = [];
-  if (major > 0) result.push(`${major}${product.unit_name}`);
-  if (minor > 0) result.push(`${minor}${product.split_unit_name}`);
-  
-  return result.join(' ');
+  return `${major}${unitName} ${minor}${splitUnitName}`;
 };
 
 export const getUnitSplit = (quantity: number, product: Product) => {
@@ -59,21 +59,28 @@ export const matchSearch = (text: string | null | undefined, query: string): boo
 export const getUserColor = (roleLevel: RoleLevel | undefined): string => {
     if (roleLevel === undefined) return 'text-black';
     const level = Number(roleLevel);
-    if (level === 0) return 'text-[#9333EA]'; // Bright Purple
-    if (level === 1) return 'text-[#EAB308]'; // Bright Gold
-    if (level === 2) return 'text-[#2563EB]'; // Bright Blue
-    if (level >= 3 && level <= 5) return 'text-gray-400'; // Pale/Fade
-    return 'text-black'; // 06+
+    
+    // 00: Bright Purple
+    if (level === 0) return 'text-[#A855F7] font-bold'; 
+    // 01: Bright Gold
+    if (level === 1) return 'text-[#EAB308] font-bold'; 
+    // 02: Bright Blue
+    if (level === 2) return 'text-[#3B82F6] font-bold'; 
+    // 03-05: Pale/Fade (No Red/Purple/Gold)
+    if (level >= 3 && level <= 5) return 'text-gray-400 font-medium'; 
+    // 06+: Black
+    return 'text-black font-normal'; 
 };
 
 export const getLogColor = (type: string): string => {
     switch (type) {
-        case 'IN': return 'text-green-600';
-        case 'OUT': return 'text-red-600';
-        case 'ADJUST': return 'text-blue-500';
-        case 'IMPORT': return 'text-purple-600';
-        case 'DELETE': return 'text-red-800 font-bold';
-        default: return 'text-gray-600';
+        case 'IN': return 'text-emerald-600 bg-emerald-50';
+        case 'OUT': return 'text-rose-600 bg-rose-50';
+        case 'ADJUST': return 'text-blue-500 bg-blue-50';
+        case 'IMPORT': return 'text-purple-600 bg-purple-50';
+        case 'DELETE': return 'text-red-900 bg-red-100 font-bold';
+        case 'RESTORE': return 'text-amber-600 bg-amber-50';
+        default: return 'text-gray-600 bg-gray-50';
     }
 };
 

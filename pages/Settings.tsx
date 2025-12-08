@@ -1,6 +1,8 @@
 
 
 
+
+
 import React, { useState, useEffect } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -34,7 +36,7 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT
     const sqlScript = `
--- STOCKWISE V2.3 MIGRATION SCRIPT
+-- STOCKWISE V2.4 MIGRATION SCRIPT
 -- SQL是/否较上一次发生更改: 是
 -- SQL是/否必须包含重置数据库: 否
 
@@ -65,13 +67,15 @@ BEGIN
             '123',
             9,
             '{
-                "logs_level": "C", 
+                "logs_level": "D", 
                 "announcement_rule": "VIEW", 
                 "store_scope": "GLOBAL", 
                 "show_excel": false, 
                 "view_peers": false, 
                 "view_self_in_list": false, 
                 "hide_perm_page": true,
+                "hide_audit_hall": true,
+                "hide_store_management": true,
                 "only_view_config": true
             }'::jsonb,
             '{}',
@@ -337,6 +341,7 @@ const PermissionsSettings = () => {
                          <tr>
                              <th className="p-4">用户</th>
                              <th className="p-4">等级</th>
+                             <th className="p-4">日志权限</th>
                              <th className="p-4">门店范围</th>
                              <th className="p-4 text-right">操作</th>
                          </tr>
@@ -346,6 +351,7 @@ const PermissionsSettings = () => {
                              <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
                                  <td className="p-4 font-bold">{u.username}</td>
                                  <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
+                                 <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{u.permissions.logs_level}级</span></td>
                                  <td className="p-4 text-sm">{u.permissions.store_scope === 'GLOBAL' ? '全局' : `受限 (${u.allowed_store_ids.length})`}</td>
                                  <td className="p-4 text-right space-x-2">
                                      <button onClick={() => handleEdit(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
@@ -370,20 +376,63 @@ const PermissionsSettings = () => {
                                  <div className="grid grid-cols-2 gap-4">
                                      <div><label className="block text-sm font-bold mb-1">用户名</label><input value={formData.username} onChange={e => handleChange('username', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
                                      <div><label className="block text-sm font-bold mb-1">密码</label><input value={formData.password} onChange={e => handleChange('password', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
-                                     <div><label className="block text-sm font-bold mb-1">等级</label><input type="number" min={(currentUser?.role_level||0)+1} max="9" value={formData.role_level} onChange={e => handleChange('role_level', Number(e.target.value))} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
+                                     <div><label className="block text-sm font-bold mb-1">等级 (0-9)</label><input type="number" min={(currentUser?.role_level||0)+1} max="9" value={formData.role_level} onChange={e => handleChange('role_level', Number(e.target.value))} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
                                  </div>
                              </div>
 
                              <div className="space-y-4">
                                  <h3 className="font-bold border-b dark:border-gray-700 pb-2">权限矩阵</h3>
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded"><label className="block font-bold mb-2">日志权限</label><div className="space-y-2"><label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'A'} onChange={() => handleChange('logs_level', 'A', 'perm')} /> A级</label><label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'B'} onChange={() => handleChange('logs_level', 'B', 'perm')} /> B级</label><label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'C'} onChange={() => handleChange('logs_level', 'C', 'perm')} /> C级</label></div></div>
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded"><label className="block font-bold mb-2">公告权限</label><div className="space-x-4"><label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'PUBLISH'} onChange={() => handleChange('announcement_rule', 'PUBLISH', 'perm')} /> 发布</label><label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'VIEW'} onChange={() => handleChange('announcement_rule', 'VIEW', 'perm')} /> 仅接收</label></div></div>
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded"><label className="block font-bold mb-2">门店范围</label><div className="space-x-4 mb-3"><label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'GLOBAL'} onChange={() => handleChange('store_scope', 'GLOBAL', 'perm')} /> 全局</label><label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'LIMITED'} onChange={() => handleChange('store_scope', 'LIMITED', 'perm')} /> 受限</label></div>{formData.permissions?.store_scope === 'LIMITED' && (<div className="pl-4 border-l-2 border-blue-500 grid grid-cols-2 gap-2">{stores.map(s => (<label key={s.id} className="flex items-center gap-2"><input type="checkbox" checked={formData.allowed_store_ids?.includes(s.id)} onChange={(e) => handleStoreChange(s.id, e.target.checked)} />{s.name}</label>))}</div>)}</div>
+                                 
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                    <label className="block font-bold mb-2">日志权限 (Log Level)</label>
+                                    <div className="space-y-2 text-sm">
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'A'} onChange={() => handleChange('logs_level', 'A', 'perm')} /> 
+                                            <span className="font-bold text-red-600">A级:</span> 查看所有 + 任意撤销 (最高)
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'B'} onChange={() => handleChange('logs_level', 'B', 'perm')} /> 
+                                            <span className="font-bold text-orange-600">B级:</span> 查看所有 + 仅撤销低等级
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'C'} onChange={() => handleChange('logs_level', 'C', 'perm')} /> 
+                                            <span className="font-bold text-blue-600">C级:</span> 查看所有 + 仅撤销自己
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'D'} onChange={() => handleChange('logs_level', 'D', 'perm')} /> 
+                                            <span className="font-bold text-gray-600">D级:</span> 仅查看自己 + 仅撤销自己
+                                        </label>
+                                    </div>
+                                 </div>
+
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                     <label className="block font-bold mb-2">公告权限</label>
+                                     <div className="space-x-4">
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'PUBLISH'} onChange={() => handleChange('announcement_rule', 'PUBLISH', 'perm')} /> 发布</label>
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'VIEW'} onChange={() => handleChange('announcement_rule', 'VIEW', 'perm')} /> 仅接收</label>
+                                     </div>
+                                 </div>
+
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                     <label className="block font-bold mb-2">门店范围</label>
+                                     <div className="space-x-4 mb-3">
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'GLOBAL'} onChange={() => handleChange('store_scope', 'GLOBAL', 'perm')} /> 全局</label>
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'LIMITED'} onChange={() => handleChange('store_scope', 'LIMITED', 'perm')} /> 受限</label>
+                                     </div>
+                                     {formData.permissions?.store_scope === 'LIMITED' && (
+                                         <div className="pl-4 border-l-2 border-blue-500 grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                                             {stores.map(s => (<label key={s.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={formData.allowed_store_ids?.includes(s.id)} onChange={(e) => handleStoreChange(s.id, e.target.checked)} />{s.name}</label>))}
+                                         </div>
+                                     )}
+                                 </div>
+
                                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded grid grid-cols-2 gap-4">
                                      <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.show_excel} onChange={(e) => handleChange('show_excel', e.target.checked, 'perm')} /> 显示 Excel 导出</label>
                                      <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_peers} onChange={(e) => handleChange('view_peers', e.target.checked, 'perm')} /> 可见同级</label>
                                      <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_self_in_list} onChange={(e) => handleChange('view_self_in_list', e.target.checked, 'perm')} /> 显示自己</label>
                                      <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_perm_page} onChange={(e) => handleChange('hide_perm_page', e.target.checked, 'perm')} /> 隐藏权限页</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_audit_hall} onChange={(e) => handleChange('hide_audit_hall', e.target.checked, 'perm')} /> 隐藏审计大厅</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_store_management} onChange={(e) => handleChange('hide_store_management', e.target.checked, 'perm')} /> 隐藏门店管理 (增删改)</label>
                                  </div>
                              </div>
                          </div>

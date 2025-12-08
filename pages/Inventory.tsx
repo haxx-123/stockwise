@@ -1,6 +1,8 @@
 
 
 
+
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
@@ -258,10 +260,10 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                          {deleteMode && !isMobileOverlay && (
                              <th className="px-2 py-4 w-10 text-center"></th>
                          )}
-                         <th className="px-4 py-4 truncate">商品名称</th>
-                         <th className="px-4 py-4 truncate">SKU/类别</th>
-                         <th className="px-4 py-4 truncate">总库存</th>
-                         <th className="px-4 py-4 text-right truncate">操作</th>
+                         <th className="px-4 py-4 truncate w-1/4">商品名称</th>
+                         <th className="px-4 py-4 truncate w-1/6">SKU/类别</th>
+                         <th className="px-4 py-4 truncate w-1/4">总库存 (大单位 小单位)</th>
+                         <th className="px-4 py-4 text-right truncate w-1/6">操作</th>
                     </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
@@ -280,7 +282,7 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                                 <input type="checkbox" checked={selectedToDelete.has(item.product.id)} onChange={()=>toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id))} className="w-5 h-5 rounded cursor-pointer accent-blue-600 border-2 dark:border-white dark:bg-gray-700" />
                                             </td>
                                         )}
-                                        <td className="px-4 py-4 font-bold text-gray-800 dark:text-white truncate">{item.product.name}</td>
+                                        <td className="px-4 py-4 font-bold text-gray-800 dark:text-white truncate" title={item.product.name}>{item.product.name}</td>
                                         <td className="px-4 py-4 text-gray-500 text-xs truncate">
                                             <div>{ph(item.product.sku)}</div>
                                             <div className="text-gray-400">{ph(item.product.category)}</div>
@@ -296,29 +298,33 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                     <tr className="bg-gray-50/50 dark:bg-gray-900/50 animate-fade-in">
                                         <td colSpan={deleteMode ? 6 : 5} className="p-0">
                                             <div className="border-t border-b border-gray-200 dark:border-gray-700">
-                                                {/* Batch Header */}
-                                                <div className="grid grid-cols-7 gap-2 bg-gray-200 dark:bg-gray-800 p-2 text-xs font-bold text-gray-600 dark:text-gray-300">
-                                                    <div className="col-span-1 text-center">选择</div>
-                                                    <div className="col-span-1">批号</div>
-                                                    {currentStore === 'all' && <div className="col-span-1">门店</div>}
-                                                    <div className={currentStore === 'all' ? 'col-span-1' : 'col-span-2'}>数量({item.product.unit_name})</div>
-                                                    <div className="col-span-1">数量({item.product.split_unit_name || '散'})</div>
-                                                    <div className="col-span-1">有效期</div>
-                                                    <div className="col-span-1 text-right">操作</div>
+                                                {/* Batch Header - Equidistant */}
+                                                <div className="flex bg-gray-200 dark:bg-gray-800 p-2 text-xs font-bold text-gray-600 dark:text-gray-300">
+                                                    <div className="w-10 text-center">选</div>
+                                                    <div className="flex-1">批号</div>
+                                                    {currentStore === 'all' && <div className="flex-1">门店</div>}
+                                                    <div className="flex-1">数量({item.product.unit_name || '大'})</div>
+                                                    <div className="flex-1">数量({item.product.split_unit_name || '小'})</div>
+                                                    <div className="flex-1">有效期</div>
+                                                    <div className="w-20 text-right">操作</div>
                                                 </div>
                                                 {item.batches.map((batch: any) => {
                                                     const split = getUnitSplit(batch.quantity, item.product);
                                                     return (
-                                                        <div key={batch.id} className="grid grid-cols-7 gap-2 items-center p-3 border-b dark:border-gray-800 last:border-0 hover:bg-white dark:hover:bg-gray-800 transition-colors text-sm">
-                                                            <div className="col-span-1 text-center">
+                                                        <div key={batch.id} className="flex items-center p-3 border-b dark:border-gray-800 last:border-0 hover:bg-white dark:hover:bg-gray-800 transition-colors text-sm">
+                                                            <div className="w-10 text-center">
                                                                 {deleteMode && <input type="checkbox" checked={selectedBatchIds.has(batch.id)} onChange={()=>toggleSelectBatch(batch.id)} className="w-4 h-4 accent-blue-600 dark:border-white" />}
                                                             </div>
-                                                            <div className="col-span-1 font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 px-1 rounded inline-block w-fit">{batch.batch_number}</div>
-                                                            {currentStore === 'all' && <div className="col-span-1 text-gray-500 text-xs">{batch.store_name}</div>}
-                                                            <div className={currentStore === 'all' ? 'col-span-1 font-bold text-green-700 dark:text-green-400' : 'col-span-2 font-bold text-green-700 dark:text-green-400'}>{split.major}</div>
-                                                            <div className="col-span-1 text-gray-500">{split.minor}</div>
-                                                            <div className="col-span-1 text-xs text-orange-600 dark:text-orange-400">{batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}</div>
-                                                            <div className="col-span-1 text-right flex justify-end gap-1">
+                                                            <div className="flex-1 font-mono">
+                                                                <span className="text-purple-700 bg-purple-50 dark:bg-purple-900/30 dark:text-purple-300 px-1 rounded">{batch.batch_number}</span>
+                                                            </div>
+                                                            {currentStore === 'all' && <div className="flex-1 text-gray-500 text-xs truncate">{batch.store_name}</div>}
+                                                            <div className="flex-1 font-bold text-gray-800 dark:text-gray-200">{split.major}</div>
+                                                            <div className="flex-1 text-gray-500">{split.minor}</div>
+                                                            <div className="flex-1 text-xs">
+                                                                <span className="text-orange-600 bg-orange-50 dark:bg-orange-900/30 dark:text-orange-400 px-1 rounded">{batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}</span>
+                                                            </div>
+                                                            <div className="w-20 text-right flex justify-end gap-1">
                                                                 <button onClick={()=>setAdjustBatch(batch)} className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900 dark:text-blue-200">调</button>
                                                                 <button onClick={()=>setBillBatch(batch)} className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded dark:bg-green-900 dark:text-green-200">单</button>
                                                             </div>
@@ -344,12 +350,12 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                      <div key={item.product.id} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700 flex justify-between items-center active:scale-[0.98] transition-transform" onClick={() => onMobileClick(item)}>
                          <div className="flex items-center gap-3">
                              {deleteMode && <input type="checkbox" checked={selectedToDelete.has(item.product.id)} onChange={(e)=>{e.stopPropagation(); toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id));}} className="w-5 h-5 rounded accent-blue-600 dark:bg-gray-700 dark:border-white" />}
-                             <div>
-                                 <h3 className="font-bold text-gray-800 dark:text-white text-lg">{item.product.name}</h3>
+                             <div className="overflow-hidden">
+                                 <h3 className="font-bold text-gray-800 dark:text-white text-lg truncate">{item.product.name}</h3>
                                  <p className="text-sm text-gray-500">{formatUnit(item.totalQuantity, item.product)}</p>
                              </div>
                          </div>
-                         <Icons.ChevronRight size={24} className="text-gray-400" />
+                         <Icons.ChevronRight size={24} className="text-gray-400 flex-shrink-0" />
                      </div>
                  ))}
             </div>

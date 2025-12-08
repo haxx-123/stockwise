@@ -1,6 +1,8 @@
 
 
 
+
+
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
@@ -166,6 +168,8 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount }: any) => {
                                  <select value={popupDuration} onChange={e=>setPopupDuration(e.target.value as any)} className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white">
                                      <option value="ONCE">一次性</option>
                                      <option value="DAY">每天</option>
+                                     <option value="WEEK">每周</option>
+                                     <option value="MONTH">每月</option>
                                      <option value="FOREVER">永久</option>
                                  </select>
                              )}
@@ -292,7 +296,17 @@ const App: React.FC = () => {
     document.documentElement.classList.toggle('dark', theme === 'dark');
   }, [theme]);
   
-  useEffect(() => { if (isAuthenticated && isConfigured()) { refreshStores(); checkAnnouncements(); } }, [isAuthenticated]);
+  // Realtime Polling for Announcements
+  useEffect(() => { 
+      if (isAuthenticated && isConfigured()) { 
+          refreshStores(); 
+          checkAnnouncements(); 
+          
+          // Poll every 30 seconds for new announcements to make it "real-time" enough
+          const interval = setInterval(checkAnnouncements, 30000);
+          return () => clearInterval(interval);
+      } 
+  }, [isAuthenticated]);
 
   const refreshStores = async () => {
       const s = await dataService.getStores();
@@ -311,16 +325,50 @@ const App: React.FC = () => {
       const myId = user.id;
       // Filter visible
       const visible = all.filter(a => !a.is_force_deleted && (!a.target_users?.length || a.target_users.includes(myId)) && !a.read_by?.includes(`HIDDEN_BY_${myId}`));
+      
       const unread = visible.filter(a => !a.read_by?.includes(myId));
       setUnreadAnnouncements(unread.length);
 
-      // Check Forced Popup
-      // "Online: Immediate" -> We check here.
-      // "Offline: Next Login" -> We check here.
-      // Filter for popup active, unread by me
-      const forced = unread.find(a => a.popup_config?.enabled);
-      if (forced) {
-          setForcedAnnouncement(forced);
+      // Check Forced Popup Logic
+      // Priority: Unread Force > Recurred Force
+      const unreadForce = unread.find(a => a.popup_config?.enabled);
+      
+      if (unreadForce) {
+          setForcedAnnouncement(unreadForce);
+          return; // Stop processing, show unread first
+      }
+
+      // Check Recurring Popups (Even if read in DB, we check local storage for recurrence)
+      const recurring = visible.filter(a => a.popup_config?.enabled && a.popup_config.duration !== 'ONCE');
+      
+      for (const ann of recurring) {
+          const lastSeenKey = `sw_ann_last_seen_${ann.id}_${myId}`;
+          const lastSeen = localStorage.getItem(lastSeenKey);
+          const now = Date.now();
+          
+          let shouldShow = false;
+          if (!lastSeen) {
+              // If not seen locally but marked read in DB (e.g. read on another device), we might want to respect DB read or force show once on this device.
+              // Logic: If 'Force', we assume we show it.
+              shouldShow = true;
+          } else {
+              const lastTime = parseInt(lastSeen);
+              const diff = now - lastTime;
+              const day = 86400000;
+              
+              switch(ann.popup_config.duration) {
+                  case 'DAY': if(diff > day) shouldShow = true; break;
+                  case 'WEEK': if(diff > day * 7) shouldShow = true; break;
+                  case 'MONTH': if(diff > day * 30) shouldShow = true; break;
+                  case 'YEAR': if(diff > day * 365) shouldShow = true; break;
+                  case 'FOREVER': shouldShow = true; break; // Always show on login/refresh
+              }
+          }
+
+          if (shouldShow) {
+              setForcedAnnouncement(ann);
+              return; // Show one at a time
+          }
       }
   };
 
@@ -374,8 +422,6 @@ const App: React.FC = () => {
              const p = await dataService.getProducts(false, currentStore);
              const b = await dataService.getBatches(currentStore==='all'?undefined:currentStore);
              
-             // FLATTEN FOR EXCEL: One row per batch, or one row per product if no batches
-             // Requirement: Mother row and Child row info included.
              data = [];
              for (const prod of p) {
                  const prodBatches = b.filter(x => x.product_id === prod.id);
@@ -427,7 +473,7 @@ const App: React.FC = () => {
       case 'inventory': return <Inventory currentStore={currentStore} />;
       case 'import': return <Import currentStore={currentStore} />;
       case 'logs': return <Logs />;
-      case 'audit': return <Audit />;
+      case 'audit': return perms.can_manage_audit ? <Audit /> : <div className="p-8 text-center text-gray-500">审计大厅已隐藏</div>;
       case 'ai': return <AIInsights currentStore={currentStore} />;
       default: return <Dashboard currentStore={currentStore} onNavigate={setCurrentPage} />;
     }
@@ -482,7 +528,7 @@ const App: React.FC = () => {
       </div>
 
       {storeModalOpen && !perms.only_view_config && (
-          <StoreManager isOpen={storeModalOpen} onClose={() => setStoreModalOpen(false)} stores={stores} currentStore={currentStore} setStore={setCurrentStore} refresh={refreshStores} />
+          <StoreManager isOpen={storeModalOpen} onClose={() => setStoreModalOpen(false)} stores={stores} currentStore={currentStore} setStore={setCurrentStore} refresh={refreshStores} canManage={perms.can_manage_stores} />
       )}
       
       {announcementOpen && <AnnouncementOverlay onClose={() => setAnnouncementOpen(false)} unreadCount={unreadAnnouncements} setUnreadCount={setUnreadAnnouncements} />}
@@ -490,14 +536,23 @@ const App: React.FC = () => {
       {/* FORCED POPUP */}
       {forcedAnnouncement && (
           <div className="fixed inset-0 bg-black/80 z-[200] flex items-center justify-center p-6 animate-fade-in">
-              <div className="bg-white dark:bg-gray-900 rounded-xl max-w-lg w-full p-6 shadow-2xl">
+              <div className="bg-white dark:bg-gray-900 rounded-xl max-w-lg w-full p-6 shadow-2xl relative">
                   <h1 className="text-2xl font-bold text-red-600 mb-4">重要公告 (必读)</h1>
                   <h2 className="text-xl font-bold mb-2 dark:text-white">{forcedAnnouncement.title}</h2>
                   <div className="prose dark:prose-invert max-h-60 overflow-y-auto mb-6 custom-scrollbar" dangerouslySetInnerHTML={{__html: forcedAnnouncement.content}} />
                   <button onClick={()=>{
-                      dataService.markAnnouncementRead(forcedAnnouncement.id, user!.id);
+                      // Mark as read in DB if needed
+                      if (!forcedAnnouncement.read_by?.includes(user!.id)) {
+                          dataService.markAnnouncementRead(forcedAnnouncement.id, user!.id);
+                      }
+                      
+                      // Update Local Timestamp for Recurrence
+                      const key = `sw_ann_last_seen_${forcedAnnouncement.id}_${user!.id}`;
+                      localStorage.setItem(key, Date.now().toString());
+
                       setForcedAnnouncement(null);
-                      setUnreadAnnouncements(p=>Math.max(0, p-1));
+                      // Trigger re-check in case there are more
+                      setTimeout(checkAnnouncements, 500); 
                   }} className="w-full bg-blue-600 text-white py-3 rounded font-bold">我已阅读并知晓</button>
               </div>
           </div>
@@ -506,13 +561,14 @@ const App: React.FC = () => {
   );
 };
 
-// ... StoreManager component (same as before) ...
-const StoreManager = ({ onClose, stores, currentStore, setStore, refresh }: any) => {
+// ... StoreManager component (updated permissions) ...
+const StoreManager = ({ onClose, stores, currentStore, setStore, refresh, canManage }: any) => {
     const user = authService.getCurrentUser();
     const visibleStores = user?.permissions.store_scope === 'LIMITED' ? stores.filter((s:any) => user.allowed_store_ids.includes(s.id)) : stores;
     const [contextMenu, setContextMenu] = useState<{x:number, y:number, storeId: string} | null>(null);
 
     const handleRightClick = (e: React.MouseEvent, sid: string) => {
+        if (!canManage) return;
         e.preventDefault();
         setContextMenu({ x: e.clientX, y: e.clientY, storeId: sid });
     };
@@ -549,7 +605,7 @@ const StoreManager = ({ onClose, stores, currentStore, setStore, refresh }: any)
             <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl relative" onClick={e=>e.stopPropagation()}>
                  <h3 className="font-bold text-lg mb-4 dark:text-white flex justify-between">
                      切换门店
-                     <button onClick={handleCreate} className="text-xs bg-green-600 text-white px-2 py-1 rounded">新建</button>
+                     {canManage && <button onClick={handleCreate} className="text-xs bg-green-600 text-white px-2 py-1 rounded">新建</button>}
                  </h3>
                  <div className="max-h-60 overflow-y-auto space-y-2">
                      {user?.permissions.store_scope !== 'LIMITED' && (
