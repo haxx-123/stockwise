@@ -3,7 +3,9 @@
 
 
 
-import React, { useState, useEffect } from 'react';
+
+
+import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
 import { dataService } from '../services/dataService';
@@ -36,7 +38,7 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT
     const sqlScript = `
--- STOCKWISE V2.4 MIGRATION SCRIPT
+-- STOCKWISE V2.5 MIGRATION SCRIPT
 -- SQL是/否较上一次发生更改: 是
 -- SQL是/否必须包含重置数据库: 否
 
@@ -52,9 +54,12 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='is_undone') THEN
         ALTER TABLE transactions ADD COLUMN is_undone boolean default false;
     END IF;
-    -- New Announcement Flag
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='announcements' AND column_name='allow_delete') THEN
         ALTER TABLE announcements ADD COLUMN allow_delete boolean default true;
+    END IF;
+    -- Face ID
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='face_descriptor') THEN
+        ALTER TABLE users ADD COLUMN face_descriptor text;
     END IF;
 
     -- 2. Initialization User
@@ -135,7 +140,7 @@ $$ language plpgsql;
         return (
             <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100 flex flex-col gap-6">
                 <h1 className="text-2xl font-bold mb-2">连接配置</h1>
-                <div className="bg-white dark:bg-gray-900 p-4 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 flex flex-col gap-4 max-w-[100vw]">
+                <div className="bg-white dark:bg-gray-900 p-4 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 flex flex-col gap-4 max-w-[100vw] overflow-hidden">
                     {/* Mobile Vertical Layout enforced via flex-col */}
                     <div className="flex flex-col gap-4 w-full">
                         <div className="w-full">
@@ -181,11 +186,61 @@ $$ language plpgsql;
     return null;
 };
 
+const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const [status, setStatus] = useState('初始化相机...');
+
+    useEffect(() => {
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+            .then(stream => {
+                if(videoRef.current) videoRef.current.srcObject = stream;
+                setStatus("请将脸部对准摄像头");
+            })
+            .catch(err => setStatus("相机访问失败: " + err.message));
+        return () => {
+            if(videoRef.current && videoRef.current.srcObject) {
+                (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+            }
+        };
+    }, []);
+
+    const capture = async () => {
+        if (!videoRef.current) return;
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
+        const base64 = canvas.toDataURL('image/jpeg', 0.8);
+        
+        setStatus("正在录入...");
+        // In a real app, send to Face API to get descriptor. Here we save the image as the descriptor for simulation.
+        await dataService.updateUser(user.id, { face_descriptor: base64 });
+        onSuccess();
+    };
+
+    return (
+        <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-sm flex flex-col items-center gap-4">
+                <h3 className="font-bold text-lg dark:text-white">人脸识别设置</h3>
+                <div className="w-64 h-64 bg-black rounded-full overflow-hidden border-4 border-blue-500 relative">
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
+                </div>
+                <p className="text-sm text-gray-500">{status}</p>
+                <div className="flex gap-4 w-full">
+                    <button onClick={onCancel} className="flex-1 py-2 text-gray-500">取消</button>
+                    <button onClick={capture} className="flex-1 py-2 bg-blue-600 text-white rounded font-bold">录入人脸</button>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const AccountSettings = () => {
     const user = authService.getCurrentUser();
     const [form, setForm] = useState({ username: '', password: '' });
     const [showPass, setShowPass] = useState(false);
     const [lowerUsers, setLowerUsers] = useState<User[]>([]);
+    const [showFaceSetup, setShowFaceSetup] = useState(false);
 
     useEffect(() => {
         if (user) {
@@ -218,8 +273,14 @@ const AccountSettings = () => {
         <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100">
             <h1 className="text-2xl font-bold mb-6">账户设置</h1>
             <div className="grid md:grid-cols-2 gap-8">
-                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 w-full max-w-[100vw]">
+                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 w-full max-w-[100vw] overflow-hidden">
                     <h3 className="font-bold border-b pb-2 dark:border-gray-700">基本信息</h3>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-500 uppercase mb-1">用户 ID (只读)</label>
+                        <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs text-gray-500 font-mono break-all select-all">
+                            {user?.id}
+                        </div>
+                    </div>
                     <div>
                         <label className="block text-sm font-bold text-gray-500 uppercase mb-1">管理权限等级</label>
                         <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded text-gray-600 dark:text-gray-400 font-mono font-bold">
@@ -237,10 +298,16 @@ const AccountSettings = () => {
                             <button onClick={() => setShowPass(!showPass)} className="absolute right-3 top-3 text-gray-400"><Icons.ArrowRightLeft size={16}/></button>
                         </div>
                     </div>
+                    
+                    <button onClick={()=>setShowFaceSetup(true)} className={`w-full py-3 rounded font-bold border ${user?.face_descriptor ? 'border-green-500 text-green-600 bg-green-50' : 'border-gray-300 text-gray-600'}`}>
+                        {user?.face_descriptor ? '人脸已录入 (点击重新录入)' : '设置人脸识别登录'}
+                    </button>
+
                     <button onClick={handleSave} className="w-full py-3 rounded font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md">保存变更</button>
                     <button onClick={() => {if(confirm("确定要退出登录吗？")) authService.logout();}} className="w-full py-3 rounded font-bold border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-900/20">退出账号</button>
                 </div>
-                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 h-fit w-full max-w-[100vw]">
+                
+                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 h-fit w-full max-w-[100vw] overflow-hidden">
                      <h3 className="font-bold border-b pb-2 dark:border-gray-700 flex items-center gap-2"><Icons.ArrowRightLeft size={18}/> 快速切换账户</h3>
                      <div className="max-h-60 overflow-y-auto custom-scrollbar border rounded dark:border-gray-700">
                          {lowerUsers.length === 0 && <div className="p-4 text-center text-gray-400 text-sm">无下级账户</div>}
@@ -253,6 +320,7 @@ const AccountSettings = () => {
                      </div>
                 </div>
             </div>
+            {showFaceSetup && <FaceSetup user={user} onSuccess={()=>{setShowFaceSetup(false); alert("录入成功"); window.location.reload();}} onCancel={()=>setShowFaceSetup(false)} />}
         </div>
     );
 };
@@ -335,7 +403,7 @@ const PermissionsSettings = () => {
                  </button>
              </div>
 
-             <div className="bg-white dark:bg-gray-900 rounded-xl border dark:border-gray-700 overflow-x-auto shadow-sm w-full">
+             <div className="bg-white dark:bg-gray-900 rounded-xl border dark:border-gray-700 overflow-x-auto shadow-sm w-full max-w-[100vw]">
                  <table className="w-full text-left min-w-[600px]">
                      <thead className="bg-gray-50 dark:bg-gray-800 border-b dark:border-gray-700">
                          <tr>
@@ -373,7 +441,13 @@ const PermissionsSettings = () => {
                          <div className="p-6 space-y-6 flex-1">
                              <div className="space-y-4">
                                  <h3 className="font-bold border-b dark:border-gray-700 pb-2">基本属性</h3>
-                                 <div className="grid grid-cols-2 gap-4">
+                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                     {editingUser && (
+                                         <div className="md:col-span-2">
+                                             <label className="block text-sm font-bold text-gray-500">ID (只读)</label>
+                                             <div className="bg-gray-100 dark:bg-gray-800 p-2 text-xs font-mono break-all">{editingUser.id}</div>
+                                         </div>
+                                     )}
                                      <div><label className="block text-sm font-bold mb-1">用户名</label><input value={formData.username} onChange={e => handleChange('username', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
                                      <div><label className="block text-sm font-bold mb-1">密码</label><input value={formData.password} onChange={e => handleChange('password', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
                                      <div><label className="block text-sm font-bold mb-1">等级 (0-9)</label><input type="number" min={(currentUser?.role_level||0)+1} max="9" value={formData.role_level} onChange={e => handleChange('role_level', Number(e.target.value))} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
@@ -383,7 +457,7 @@ const PermissionsSettings = () => {
                              <div className="space-y-4">
                                  <h3 className="font-bold border-b dark:border-gray-700 pb-2">权限矩阵</h3>
                                  
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
                                     <label className="block font-bold mb-2">日志权限 (Log Level)</label>
                                     <div className="space-y-2 text-sm">
                                         <label className="flex items-center gap-2 cursor-pointer">
@@ -405,7 +479,7 @@ const PermissionsSettings = () => {
                                     </div>
                                  </div>
 
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
                                      <label className="block font-bold mb-2">公告权限</label>
                                      <div className="space-x-4">
                                          <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'PUBLISH'} onChange={() => handleChange('announcement_rule', 'PUBLISH', 'perm')} /> 发布</label>
@@ -413,7 +487,7 @@ const PermissionsSettings = () => {
                                      </div>
                                  </div>
 
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
                                      <label className="block font-bold mb-2">门店范围</label>
                                      <div className="space-x-4 mb-3">
                                          <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'GLOBAL'} onChange={() => handleChange('store_scope', 'GLOBAL', 'perm')} /> 全局</label>
@@ -426,7 +500,7 @@ const PermissionsSettings = () => {
                                      )}
                                  </div>
 
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded grid grid-cols-2 gap-4">
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
                                      <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.show_excel} onChange={(e) => handleChange('show_excel', e.target.checked, 'perm')} /> 显示 Excel 导出</label>
                                      <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_peers} onChange={(e) => handleChange('view_peers', e.target.checked, 'perm')} /> 可见同级</label>
                                      <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_self_in_list} onChange={(e) => handleChange('view_self_in_list', e.target.checked, 'perm')} /> 显示自己</label>

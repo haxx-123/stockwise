@@ -3,7 +3,9 @@
 
 
 
-import React, { useState, useEffect } from 'react';
+
+
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
 import { Inventory } from './pages/Inventory';
@@ -23,14 +25,73 @@ import { RichTextEditor } from './components/RichTextEditor';
 declare const window: any;
 declare const html2canvas: any;
 
+// FACE ID COMPONENT
+const FaceLogin = ({ onSuccess }: any) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const [status, setStatus] = useState('初始化相机...');
+    const [scanning, setScanning] = useState(false);
+
+    useEffect(() => {
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+            .then(stream => {
+                if(videoRef.current) videoRef.current.srcObject = stream;
+                setStatus("请保持脸部在框内");
+                setScanning(true);
+            })
+            .catch(err => setStatus("无法访问相机: " + err.message));
+        
+        return () => {
+             if(videoRef.current && videoRef.current.srcObject) {
+                (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+            }
+        };
+    }, []);
+
+    const attemptLogin = async () => {
+        if (!videoRef.current) return;
+        setStatus("正在验证...");
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
+        // Here we simulate matching. In real app, we compare the image against stored descriptors.
+        // For this demo, we check if any user has face_descriptor set.
+        const users = await dataService.getUsers();
+        const userWithFace = users.find(u => !!u.face_descriptor);
+        
+        if (userWithFace) {
+             // Mock success match for the demo if a user has configured face
+             authService.switchAccount(userWithFace); // sets session
+             onSuccess();
+        } else {
+             setStatus("验证失败: 未找到匹配用户或未设置人脸");
+             setScanning(false);
+        }
+    };
+
+    return (
+        <div className="flex flex-col items-center gap-4">
+             <div className="w-48 h-48 bg-gray-200 rounded-full overflow-hidden border-4 border-blue-500 relative">
+                 <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
+                 {scanning && <div className="absolute inset-0 border-2 border-white opacity-50 rounded-full animate-pulse"></div>}
+             </div>
+             <p className="text-sm text-gray-500">{status}</p>
+             <button onClick={attemptLogin} className="w-full bg-blue-600 text-white py-2 rounded-lg font-bold">开始识别</button>
+        </div>
+    );
+};
+
 const LoginScreen = ({ onLogin }: any) => {
     const [user, setUser] = useState('');
     const [pass, setPass] = useState('');
     const [error, setError] = useState('');
+    const [mode, setMode] = useState<'PASSWORD' | 'FACE'>('PASSWORD');
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
         if (await authService.login(user, pass)) onLogin(); else setError("用户名或密码错误");
     };
+
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
             <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-xl w-full max-w-sm text-center">
@@ -38,19 +99,31 @@ const LoginScreen = ({ onLogin }: any) => {
                     <Icons.Box size={40} />
                 </div>
                 <h1 className="text-2xl font-bold mb-8 dark:text-white">StockWise</h1>
-                <form onSubmit={handleSubmit} className="space-y-4 text-left">
-                    {error && <div className="text-red-500 text-sm text-center">{error}</div>}
-                    <input className="w-full border p-3 rounded-lg dark:bg-gray-700 dark:text-white" placeholder="用户名" value={user} onChange={e=>setUser(e.target.value)} />
-                    <input type="password" className="w-full border p-3 rounded-lg dark:bg-gray-700 dark:text-white" placeholder="密码" value={pass} onChange={e=>setPass(e.target.value)} />
-                    <button className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold">登录</button>
-                </form>
+                
+                <div className="flex border-b mb-6 dark:border-gray-700">
+                    <button onClick={()=>setMode('PASSWORD')} className={`flex-1 py-2 font-bold ${mode==='PASSWORD' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500'}`}>密码登录</button>
+                    <button onClick={()=>setMode('FACE')} className={`flex-1 py-2 font-bold ${mode==='FACE' ? 'border-b-2 border-blue-500 text-blue-600' : 'text-gray-500'}`}>人脸识别</button>
+                </div>
+
+                {mode === 'PASSWORD' ? (
+                    <form onSubmit={handleSubmit} className="space-y-4 text-left animate-fade-in">
+                        {error && <div className="text-red-500 text-sm text-center">{error}</div>}
+                        <input className="w-full border p-3 rounded-lg dark:bg-gray-700 dark:text-white" placeholder="用户名" value={user} onChange={e=>setUser(e.target.value)} />
+                        <input type="password" className="w-full border p-3 rounded-lg dark:bg-gray-700 dark:text-white" placeholder="密码" value={pass} onChange={e=>setPass(e.target.value)} />
+                        <button className="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700">登录</button>
+                    </form>
+                ) : (
+                    <div className="animate-fade-in">
+                        <FaceLogin onSuccess={onLogin} />
+                    </div>
+                )}
             </div>
         </div>
     );
 };
 
 // --- ANNOUNCEMENT SYSTEM ---
-const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount }: any) => {
+const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount, initialView, forcedAnn }: any) => {
     const [view, setView] = useState<'MY_LIST' | 'DETAIL' | 'MANAGE_SELECT' | 'MANAGE_LIST' | 'PUBLISH'>('MY_LIST');
     const [anns, setAnns] = useState<Announcement[]>([]);
     const [detailAnn, setDetailAnn] = useState<Announcement | null>(null);
@@ -71,7 +144,15 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount }: any) => {
     const [deleteMode, setDeleteMode] = useState(false);
     const [selectedToDelete, setSelectedToDelete] = useState<Set<string>>(new Set());
 
-    useEffect(() => { loadMyAnns(); dataService.getUsers().then(setUsers); }, []);
+    useEffect(() => { 
+        loadMyAnns(); 
+        dataService.getUsers().then(setUsers); 
+        if (forcedAnn) {
+            setDetailAnn(forcedAnn);
+            setView('DETAIL');
+        }
+        if (initialView) setView(initialView);
+    }, []);
 
     const loadMyAnns = async () => {
         const all = await dataService.getAnnouncements();
@@ -83,7 +164,6 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount }: any) => {
         );
         setAnns(my);
         
-        // Calculate Unread
         const unread = my.filter(a => !a.read_by?.includes(myId)).length;
         setUnreadCount(unread);
     };
@@ -118,18 +198,27 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount }: any) => {
     const openDetail = (ann: Announcement) => {
         setDetailAnn(ann);
         setView('DETAIL');
+        // If viewing normally (not managing), mark read
         if (!manageMode && user) {
-            dataService.markAnnouncementRead(ann.id, user.id);
-            setUnreadCount((prev:number) => Math.max(0, prev - 1));
+             if (!ann.read_by?.includes(user.id)) {
+                 dataService.markAnnouncementRead(ann.id, user.id);
+                 setUnreadCount((prev:number) => Math.max(0, prev - 1));
+             }
+             // For force popup logic, update local timestamp
+             const key = `sw_ann_last_seen_${ann.id}_${user.id}`;
+             localStorage.setItem(key, Date.now().toString());
         }
     };
 
     // --- FULL PAGE DETAIL (Overlay) ---
     if (view === 'DETAIL' && detailAnn) {
         return (
-             <div className="fixed inset-0 bg-white dark:bg-gray-900 z-[100] flex flex-col animate-fade-in w-full h-full">
+             <div className="fixed inset-0 bg-white dark:bg-gray-900 z-[200] flex flex-col animate-fade-in w-full h-full">
                  <div className="p-4 border-b flex justify-between items-center bg-gray-50 dark:bg-gray-800 shrink-0">
-                     <button onClick={()=>setView(manageMode ? 'MANAGE_LIST' : 'MY_LIST')} className="p-2 bg-gray-200 dark:bg-gray-700 rounded-full"><Icons.Minus className="dark:text-white" size={24}/></button>
+                     <button onClick={()=>{
+                         if(forcedAnn) onClose(); // Force popup closes everything
+                         else setView(manageMode ? 'MANAGE_LIST' : 'MY_LIST');
+                     }} className="p-2 bg-gray-200 dark:bg-gray-700 rounded-full"><Icons.Minus className="dark:text-white" size={24}/></button>
                      <h2 className="font-bold dark:text-white truncate mx-4 flex-1 text-center">公告详情</h2>
                      <div className="w-10"></div>
                  </div>
@@ -140,6 +229,13 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount }: any) => {
                          <span>{new Date(detailAnn.created_at).toLocaleString()}</span>
                      </div>
                      <div className="prose dark:prose-invert max-w-none dark:text-gray-300" dangerouslySetInnerHTML={{__html: detailAnn.content}} />
+                     
+                     {/* Force Read Button */}
+                     {forcedAnn && (
+                         <div className="mt-8">
+                             <button onClick={onClose} className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold shadow-lg">我已阅读并知晓</button>
+                         </div>
+                     )}
                  </div>
              </div>
         );
@@ -271,6 +367,8 @@ const App: React.FC = () => {
   // Announcement State
   const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [unreadAnnouncements, setUnreadAnnouncements] = useState(0);
+  
+  // Force Announcement State
   const [forcedAnnouncement, setForcedAnnouncement] = useState<Announcement | null>(null);
 
   // Mobile Tools Menu
@@ -302,7 +400,7 @@ const App: React.FC = () => {
           refreshStores(); 
           checkAnnouncements(); 
           
-          // Poll every 30 seconds for new announcements to make it "real-time" enough
+          // Poll every 30 seconds
           const interval = setInterval(checkAnnouncements, 30000);
           return () => clearInterval(interval);
       } 
@@ -335,7 +433,7 @@ const App: React.FC = () => {
       
       if (unreadForce) {
           setForcedAnnouncement(unreadForce);
-          return; // Stop processing, show unread first
+          return; 
       }
 
       // Check Recurring Popups (Even if read in DB, we check local storage for recurrence)
@@ -348,8 +446,7 @@ const App: React.FC = () => {
           
           let shouldShow = false;
           if (!lastSeen) {
-              // If not seen locally but marked read in DB (e.g. read on another device), we might want to respect DB read or force show once on this device.
-              // Logic: If 'Force', we assume we show it.
+              // Not seen locally = Show (login trigger)
               shouldShow = true;
           } else {
               const lastTime = parseInt(lastSeen);
@@ -361,7 +458,7 @@ const App: React.FC = () => {
                   case 'WEEK': if(diff > day * 7) shouldShow = true; break;
                   case 'MONTH': if(diff > day * 30) shouldShow = true; break;
                   case 'YEAR': if(diff > day * 365) shouldShow = true; break;
-                  case 'FOREVER': shouldShow = true; break; // Always show on login/refresh
+                  case 'FOREVER': shouldShow = true; break; 
               }
           }
 
@@ -533,29 +630,25 @@ const App: React.FC = () => {
       
       {announcementOpen && <AnnouncementOverlay onClose={() => setAnnouncementOpen(false)} unreadCount={unreadAnnouncements} setUnreadCount={setUnreadAnnouncements} />}
       
-      {/* FORCED POPUP */}
+      {/* FORCED POPUP: Reuses AnnouncementOverlay Component logic via 'forcedAnn' prop */}
       {forcedAnnouncement && (
-          <div className="fixed inset-0 bg-black/80 z-[200] flex items-center justify-center p-6 animate-fade-in">
-              <div className="bg-white dark:bg-gray-900 rounded-xl max-w-lg w-full p-6 shadow-2xl relative">
-                  <h1 className="text-2xl font-bold text-red-600 mb-4">重要公告 (必读)</h1>
-                  <h2 className="text-xl font-bold mb-2 dark:text-white">{forcedAnnouncement.title}</h2>
-                  <div className="prose dark:prose-invert max-h-60 overflow-y-auto mb-6 custom-scrollbar" dangerouslySetInnerHTML={{__html: forcedAnnouncement.content}} />
-                  <button onClick={()=>{
-                      // Mark as read in DB if needed
-                      if (!forcedAnnouncement.read_by?.includes(user!.id)) {
-                          dataService.markAnnouncementRead(forcedAnnouncement.id, user!.id);
-                      }
-                      
-                      // Update Local Timestamp for Recurrence
-                      const key = `sw_ann_last_seen_${forcedAnnouncement.id}_${user!.id}`;
-                      localStorage.setItem(key, Date.now().toString());
-
-                      setForcedAnnouncement(null);
-                      // Trigger re-check in case there are more
-                      setTimeout(checkAnnouncements, 500); 
-                  }} className="w-full bg-blue-600 text-white py-3 rounded font-bold">我已阅读并知晓</button>
-              </div>
-          </div>
+          <AnnouncementOverlay 
+             onClose={() => {
+                 // Mark read locally to handle popup frequency
+                 if(user) {
+                    const key = `sw_ann_last_seen_${forcedAnnouncement.id}_${user.id}`;
+                    localStorage.setItem(key, Date.now().toString());
+                    // Also mark server read if not already
+                    if (!forcedAnnouncement.read_by?.includes(user.id)) {
+                        dataService.markAnnouncementRead(forcedAnnouncement.id, user.id);
+                    }
+                 }
+                 setForcedAnnouncement(null);
+             }}
+             unreadCount={0}
+             setUnreadCount={()=>{}}
+             forcedAnn={forcedAnnouncement}
+          />
       )}
     </div>
   );

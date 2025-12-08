@@ -1,6 +1,8 @@
 
 
 
+
+
 import React, { useMemo, useEffect, useState } from 'react';
 import { Icons } from '../components/Icons';
 import { Product, Batch } from '../types';
@@ -229,21 +231,34 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
       {detailModal && (
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fade-in">
               <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-5xl h-[80vh] flex flex-col shadow-2xl border dark:border-gray-700">
-                  <div className="p-4 border-b dark:border-gray-700 flex flex-col md:flex-row justify-between items-center bg-gray-50 dark:bg-gray-800 gap-4">
-                      <div className="flex items-center gap-3">
-                          <h2 className="text-xl font-bold dark:text-white">{detailModal.type === 'LOW' ? '低库存详情' : '即将过期详情'}</h2>
-                      </div>
-                      <div className="flex gap-2 items-center w-full md:w-auto">
-                         <input placeholder="搜索..." value={modalSearch} onChange={e=>setModalSearch(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white flex-1 md:w-40"/>
-                         <select value={modalTypeFilter} onChange={e=>setModalTypeFilter(e.target.value)} className="border rounded px-2 py-1 text-sm dark:bg-gray-700 dark:text-white">
-                             <option value="ALL">全部</option>
-                         </select>
-                         <div className="flex gap-1 ml-2">
-                             <button onClick={handleScreenshot} title="截图" className="p-1 hover:bg-gray-200 rounded text-xl">📷</button>
-                             <button onClick={handleCopy} title="复制" className="p-1 hover:bg-gray-200 rounded text-xl">📄</button>
-                             <button onClick={handleExcel} title="Excel" className="p-1 hover:bg-gray-200 rounded text-xl">📊</button>
+                  <div className="p-4 border-b dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+                      {/* Responsive Header: 3 rows on mobile, 1 row on desktop */}
+                      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                          {/* Row 1: Icon + Title */}
+                          <div className="flex items-center gap-3 justify-center md:justify-start">
+                              <div className={`p-2 rounded-lg ${detailModal.type==='LOW'?'bg-red-100 text-red-600':'bg-amber-100 text-amber-600'}`}>
+                                  {detailModal.type==='LOW'?<Icons.AlertTriangle size={20}/>:<Icons.Sparkles size={20}/>}
+                              </div>
+                              <h2 className="text-xl font-bold dark:text-white">{detailModal.type === 'LOW' ? '低库存详情' : '即将过期详情'}</h2>
                           </div>
-                          <button onClick={() => setDetailModal(null)}><Icons.Minus size={24} className="text-gray-500"/></button>
+                          
+                          {/* Row 2: Search + Filter */}
+                          <div className="flex gap-2 w-full md:w-auto">
+                              <input placeholder="搜索..." value={modalSearch} onChange={e=>setModalSearch(e.target.value)} className="border rounded px-3 py-2 text-sm dark:bg-gray-700 dark:text-white flex-1 md:w-48"/>
+                              <select value={modalTypeFilter} onChange={e=>setModalTypeFilter(e.target.value)} className="border rounded px-2 py-2 text-sm dark:bg-gray-700 dark:text-white">
+                                 <option value="ALL">全部</option>
+                              </select>
+                          </div>
+
+                          {/* Row 3: Tools + Close */}
+                          <div className="flex justify-between md:justify-end items-center gap-2">
+                             <div className="flex gap-1">
+                                 <button onClick={handleScreenshot} title="截图" className="p-2 hover:bg-gray-200 rounded text-xl">📷</button>
+                                 <button onClick={handleCopy} title="复制" className="p-2 hover:bg-gray-200 rounded text-xl">📄</button>
+                                 <button onClick={handleExcel} title="Excel" className="p-2 hover:bg-gray-200 rounded text-xl">📊</button>
+                              </div>
+                              <button onClick={() => setDetailModal(null)} className="p-2 hover:bg-gray-200 rounded-full"><Icons.Minus size={24} className="text-gray-500"/></button>
+                          </div>
                       </div>
                   </div>
                   <div id="dashboard-modal-content" className="flex-1 overflow-auto p-4 custom-scrollbar">

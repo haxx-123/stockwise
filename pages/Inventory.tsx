@@ -3,6 +3,8 @@
 
 
 
+
+
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
@@ -318,7 +320,7 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                                             <div className="flex-1 font-mono">
                                                                 <span className="text-purple-700 bg-purple-50 dark:bg-purple-900/30 dark:text-purple-300 px-1 rounded">{batch.batch_number}</span>
                                                             </div>
-                                                            {currentStore === 'all' && <div className="flex-1 text-gray-500 text-xs truncate">{batch.store_name}</div>}
+                                                            {currentStore === 'all' && <div className="flex-1 text-gray-500 text-xs truncate font-bold text-blue-500">{batch.store_name}</div>}
                                                             <div className="flex-1 font-bold text-gray-800 dark:text-gray-200">{split.major}</div>
                                                             <div className="flex-1 text-gray-500">{split.minor}</div>
                                                             <div className="flex-1 text-xs">

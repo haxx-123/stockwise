@@ -1,5 +1,6 @@
 
 
+
 import { Product, RoleLevel } from '../types';
 
 export const DEFAULT_IMPORT_RATIO = 10;
@@ -57,19 +58,21 @@ export const matchSearch = (text: string | null | undefined, query: string): boo
 
 // --- COLORS ---
 export const getUserColor = (roleLevel: RoleLevel | undefined): string => {
-    if (roleLevel === undefined) return 'text-black';
+    if (roleLevel === undefined) return 'text-black font-bold';
     const level = Number(roleLevel);
     
-    // 00: Bright Purple
-    if (level === 0) return 'text-[#A855F7] font-bold'; 
-    // 01: Bright Gold
-    if (level === 1) return 'text-[#EAB308] font-bold'; 
-    // 02: Bright Blue
-    if (level === 2) return 'text-[#3B82F6] font-bold'; 
-    // 03-05: Pale/Fade (No Red/Purple/Gold)
-    if (level >= 3 && level <= 5) return 'text-gray-400 font-medium'; 
+    // Strict Color Coding
+    if (level === 0) return 'text-purple-600 font-extrabold shadow-sm'; // 00 亮紫色
+    if (level === 1) return 'text-yellow-500 font-extrabold shadow-sm'; // 01 亮金色
+    if (level === 2) return 'text-blue-600 font-extrabold shadow-sm';   // 02 亮蓝色
+    
+    // 03-05: Pale/Light distinct colors (No Red/Purple/Gold)
+    if (level === 3) return 'text-green-400 font-medium'; 
+    if (level === 4) return 'text-cyan-400 font-medium';
+    if (level === 5) return 'text-indigo-300 font-medium';
+    
     // 06+: Black
-    return 'text-black font-normal'; 
+    return 'text-black font-bold'; 
 };
 
 export const getLogColor = (type: string): string => {
@@ -98,7 +101,7 @@ export const generatePageSummary = (pageName: string, data: any) => {
             if (item.batches && item.batches.length > 0) {
                 batchInfo = item.batches.map((b: any) => {
                     const expiry = b.expiry_date ? b.expiry_date.split('T')[0] : '无有效期';
-                    return `   • 批号: ${b.batch_number} | 数量: ${formatUnit(b.quantity, item.product)} | 有效期: ${expiry}`;
+                    return `   • 批号: ${b.batch_number} | 门店: ${b.store_name||'-'} | 数量: ${formatUnit(b.quantity, item.product)} | 有效期: ${expiry}`;
                 }).join('\n');
             } else {
                 batchInfo = '   (无批次信息)';

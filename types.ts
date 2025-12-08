@@ -93,6 +93,7 @@ export type User = {
   permissions: UserPermissions;
   allowed_store_ids: string[]; // For LIMITED scope
   is_archived?: boolean; // Soft Delete
+  face_descriptor?: string | null; // Base64 of face image or descriptor
 };
 
 export type Announcement = {
