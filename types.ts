@@ -69,13 +69,15 @@ export interface UserPermissions {
     logs_level: 'A' | 'B' | 'C'; // A: System, B: Lower Level, C: Self
     announcement_rule: 'PUBLISH' | 'VIEW';
     store_scope: 'GLOBAL' | 'LIMITED';
-    // delete_mode REMOVED - Always Soft
     show_excel: boolean;
     
     // New Permission Dimensions
     view_peers: boolean; // Can view/manage users of same level
     view_self_in_list: boolean;
     hide_perm_page: boolean; 
+    
+    // Special Init Account Permission
+    only_view_config?: boolean;
 }
 
 export type User = {

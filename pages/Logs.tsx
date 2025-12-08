@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { Transaction } from '../types';
@@ -18,7 +17,8 @@ export const Logs: React.FC = () => {
     const loadLogs = async () => {
         try {
             const data = await dataService.getTransactions(filter, 200);
-            setLogs(data);
+            // Hide RESTORE type from UI
+            setLogs(data.filter(t => t.type !== 'RESTORE'));
         } catch(e) { console.error(e); }
     };
 
@@ -58,7 +58,7 @@ export const Logs: React.FC = () => {
         return <span className={`font-mono font-bold ${color}`}>{log.type==='OUT'?'-':'+'}{log.quantity}</span>;
     };
 
-    const filteredLogs = logs; // Filter handled by API mostly, client side search omitted for brevity in XML
+    const filteredLogs = logs; 
     const totalPages = Math.ceil(filteredLogs.length / PAGE_SIZE);
     const paginatedLogs = filteredLogs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
@@ -74,7 +74,7 @@ export const Logs: React.FC = () => {
             </div>
 
             {/* Desktop Table */}
-            <div className="hidden md:block bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700 overflow-hidden shadow-sm">
+            <div className="hidden md:block bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700 overflow-hidden shadow-sm" id="table-logs">
                 <table className="w-full text-left text-sm">
                     <thead className="bg-gray-50 dark:bg-gray-900 text-gray-500 dark:text-gray-400">
                         <tr><th className="p-4">时间</th><th className="p-4">操作人</th><th className="p-4">类型</th><th className="p-4">内容/商品</th><th className="p-4 text-right">数量变动</th><th className="p-4 text-right">操作</th></tr>

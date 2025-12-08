@@ -1,5 +1,4 @@
 
-
 import { User, RoleLevel, UserPermissions } from '../types';
 import { dataService } from './dataService';
 
@@ -10,7 +9,8 @@ export const DEFAULT_PERMISSIONS: UserPermissions = {
     show_excel: false,
     view_peers: false,
     view_self_in_list: true,
-    hide_perm_page: false
+    hide_perm_page: false,
+    only_view_config: false
 };
 
 // Initial Admin Account
@@ -26,7 +26,8 @@ export const DEFAULT_ADMIN: User = {
         show_excel: true,
         view_peers: true,
         view_self_in_list: true,
-        hide_perm_page: false
+        hide_perm_page: false,
+        only_view_config: false
     },
     allowed_store_ids: []
 };
@@ -105,7 +106,8 @@ class AuthService {
             is_global_store: p.store_scope === 'GLOBAL',
             can_export_excel: p.show_excel,
             has_perm_page: !p.hide_perm_page,
-            can_view_peers: p.view_peers
+            can_view_peers: p.view_peers,
+            only_view_config: p.only_view_config
         };
     }
 }

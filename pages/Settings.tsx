@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -33,55 +32,48 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT
     const sqlScript = `
--- STOCKWISE V2.1 MIGRATION SCRIPT (Safe Update)
+-- STOCKWISE V2.2 MIGRATION SCRIPT
 
 DO $$ 
 BEGIN 
-    -- 1. Stores: Add is_archived if missing
+    -- 1. Schema Updates
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stores' AND column_name='is_archived') THEN
         ALTER TABLE stores ADD COLUMN is_archived boolean default false;
-    END IF;
-
-    -- 2. Products: Add strict isolation & archive
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='is_archived') THEN
-        ALTER TABLE products ADD COLUMN is_archived boolean default false;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='bound_store_id') THEN
         ALTER TABLE products ADD COLUMN bound_store_id text references stores(id);
     END IF;
-
-    -- 3. Batches: Add archive
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='batches' AND column_name='is_archived') THEN
-        ALTER TABLE batches ADD COLUMN is_archived boolean default false;
-    END IF;
-
-    -- 4. Users: Add archive & permission fields
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='is_archived') THEN
-        ALTER TABLE users ADD COLUMN is_archived boolean default false;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='allowed_store_ids') THEN
-        ALTER TABLE users ADD COLUMN allowed_store_ids text[] default '{}';
-    END IF;
-
-    -- 5. Announcements: Add new fields
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='announcements' AND column_name='is_force_deleted') THEN
-        ALTER TABLE announcements ADD COLUMN is_force_deleted boolean default false;
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='announcements' AND column_name='read_by') THEN
-        ALTER TABLE announcements ADD COLUMN read_by text[] default '{}';
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='announcements' AND column_name='target_users') THEN
-        ALTER TABLE announcements ADD COLUMN target_users text[];
-    END IF;
-    
-    -- 6. Transactions
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='is_undone') THEN
         ALTER TABLE transactions ADD COLUMN is_undone boolean default false;
     END IF;
 
+    -- 2. Initialization User
+    -- Insert only if not exists (check username)
+    IF NOT EXISTS (SELECT 1 FROM users WHERE username = '初始化') THEN
+        INSERT INTO users (id, username, password, role_level, permissions, allowed_store_ids, is_archived)
+        VALUES (
+            gen_random_uuid(),
+            '初始化',
+            '123',
+            9,
+            '{
+                "logs_level": "C", 
+                "announcement_rule": "VIEW", 
+                "store_scope": "GLOBAL", 
+                "show_excel": false, 
+                "view_peers": false, 
+                "view_self_in_list": false, 
+                "hide_perm_page": true,
+                "only_view_config": true
+            }'::jsonb,
+            '{}',
+            false
+        );
+    END IF;
+
 END $$;
 
--- Triggers & Functions (Re-create to ensure latest logic)
+-- Triggers (Idempotent)
 create or replace function log_audit_trail() returns trigger as $$
 begin
   if (TG_OP = 'DELETE') then
@@ -132,6 +124,7 @@ $$ language plpgsql;
             <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100 flex flex-col gap-6">
                 <h1 className="text-2xl font-bold mb-2">连接配置</h1>
                 <div className="bg-white dark:bg-gray-900 p-4 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 flex flex-col gap-4">
+                    {/* Mobile Vertical Layout enforced via flex-col */}
                     <div className="flex flex-col gap-4">
                         <div className="w-full">
                             <label className="block text-sm font-medium mb-2">Supabase Project URL</label>
@@ -141,23 +134,18 @@ $$ language plpgsql;
                             <label className="block text-sm font-medium mb-2">Supabase Anon Key</label>
                             <input type="password" value={configKey} onChange={(e) => setConfigKey(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white" />
                         </div>
-                    </div>
-                    <button onClick={handleSaveConfig} className="w-full bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 font-bold">保存配置</button>
-                    {saved && <span className="text-green-600 ml-4 font-bold">已保存</span>}
-                    
-                    <hr className="border-gray-200 dark:border-gray-700" />
-                    <div>
-                        <div className="flex justify-between items-center mb-2">
-                             <h3 className="font-bold">数据库初始化 (SQL)</h3>
-                             <div className="text-xs text-right">
-                                <p>Type: <span className="text-blue-500 font-bold">Safe Migration</span></p>
+                        
+                        <div className="w-full">
+                             <div className="flex justify-between items-center mb-2">
+                                 <h3 className="font-bold text-sm">数据库初始化 SQL</h3>
+                                 <button onClick={() => navigator.clipboard.writeText(sqlScript)} className="bg-blue-100 text-blue-700 px-2 py-1 text-xs rounded">复制 SQL</button>
                              </div>
+                             <pre className="bg-black text-green-400 p-4 rounded h-40 overflow-auto text-xs font-mono w-full">{sqlScript}</pre>
                         </div>
-                        <div className="relative">
-                            <pre className="bg-black text-green-400 p-4 rounded h-64 overflow-auto text-xs font-mono">{sqlScript}</pre>
-                            <button onClick={() => navigator.clipboard.writeText(sqlScript)} className="absolute top-2 right-2 bg-white/20 px-2 py-1 text-xs text-white rounded">复制</button>
-                        </div>
+
+                        <button onClick={handleSaveConfig} className="w-full bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 font-bold mt-2">保存配置</button>
                     </div>
+                    {saved && <span className="text-green-600 font-bold text-center">已保存</span>}
                 </div>
             </div>
         );
@@ -263,8 +251,6 @@ const PermissionsSettings = () => {
     const [stores, setStores] = useState<Store[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
-
-    // Form State for User
     const [formData, setFormData] = useState<Partial<User>>({});
     const [hasChanges, setHasChanges] = useState(false);
 
@@ -272,12 +258,9 @@ const PermissionsSettings = () => {
         if (!currentUser) return;
         const [users, allStores] = await Promise.all([dataService.getUsers(), dataService.getStores()]);
         let subs: User[] = [];
-        // View Peers logic
         if (currentUser.permissions.view_peers) subs = users.filter(u => u.role_level >= currentUser.role_level);
         else subs = users.filter(u => u.role_level > currentUser.role_level);
-        // View Self Logic
         if (!currentUser.permissions.view_self_in_list) subs = subs.filter(u => u.id !== currentUser.id);
-        
         setSubordinates(subs);
         setStores(allStores);
     };
@@ -303,10 +286,7 @@ const PermissionsSettings = () => {
     const handleChange = (field: string, value: any, nested?: string) => {
         setHasChanges(true);
         if (nested) {
-            setFormData(prev => ({
-                ...prev,
-                permissions: { ...prev.permissions!, [field]: value }
-            }));
+            setFormData(prev => ({ ...prev, permissions: { ...prev.permissions!, [field]: value } }));
         } else {
             setFormData(prev => ({ ...prev, [field]: value }));
         }
@@ -322,23 +302,16 @@ const PermissionsSettings = () => {
     const handleSave = async () => {
         if (!formData.username) return alert("用户名必填");
         if (Number(formData.role_level) <= (currentUser?.role_level || 0) && currentUser?.role_level !== 0) return alert("只能创建/修改等级比自己低的用户");
-
         try {
-            if (editingUser) {
-                await dataService.updateUser(editingUser.id, formData);
-            } else {
-                await dataService.createUser(formData as any);
-            }
+            if (editingUser) await dataService.updateUser(editingUser.id, formData);
+            else await dataService.createUser(formData as any);
             setIsModalOpen(false);
             loadData();
         } catch(e: any) { alert(e.message); }
     };
 
     const handleDeleteUser = async (uid: string) => {
-        if(confirm("确定删除该用户？(软删除)")) {
-            await dataService.deleteUser(uid);
-            loadData();
-        }
+        if(confirm("确定删除该用户？(软删除)")) { await dataService.deleteUser(uid); loadData(); }
     };
 
     return (
@@ -357,7 +330,6 @@ const PermissionsSettings = () => {
                              <th className="p-4">用户</th>
                              <th className="p-4">等级</th>
                              <th className="p-4">门店范围</th>
-                             <th className="p-4">日志权限</th>
                              <th className="p-4 text-right">操作</th>
                          </tr>
                      </thead>
@@ -367,7 +339,6 @@ const PermissionsSettings = () => {
                                  <td className="p-4 font-bold">{u.username}</td>
                                  <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
                                  <td className="p-4 text-sm">{u.permissions.store_scope === 'GLOBAL' ? '全局' : `受限 (${u.allowed_store_ids.length})`}</td>
-                                 <td className="p-4 text-sm">{u.permissions.logs_level === 'A' ? 'A (系统)' : u.permissions.logs_level === 'B' ? 'B (下级)' : 'C (仅自己)'}</td>
                                  <td className="p-4 text-right space-x-2">
                                      <button onClick={() => handleEdit(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
                                      <button onClick={() => handleDeleteUser(u.id)} className="text-red-600 font-bold hover:underline">删除</button>
@@ -386,77 +357,25 @@ const PermissionsSettings = () => {
                              <button onClick={() => setIsModalOpen(false)}><Icons.Minus size={24}/></button>
                          </div>
                          <div className="p-6 space-y-6 flex-1">
-                             {/* Basic Info */}
                              <div className="space-y-4">
                                  <h3 className="font-bold border-b dark:border-gray-700 pb-2">基本属性</h3>
                                  <div className="grid grid-cols-2 gap-4">
-                                     <div>
-                                         <label className="block text-sm font-bold mb-1">用户名</label>
-                                         <input value={formData.username} onChange={e => handleChange('username', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600"/>
-                                     </div>
-                                     <div>
-                                         <label className="block text-sm font-bold mb-1">密码</label>
-                                         <input value={formData.password} onChange={e => handleChange('password', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600"/>
-                                     </div>
-                                     <div>
-                                         <label className="block text-sm font-bold mb-1">管理等级 (数值越大权限越低)</label>
-                                         <input type="number" min={(currentUser?.role_level||0)+1} max="9" value={formData.role_level} onChange={e => handleChange('role_level', Number(e.target.value))} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600"/>
-                                     </div>
+                                     <div><label className="block text-sm font-bold mb-1">用户名</label><input value={formData.username} onChange={e => handleChange('username', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
+                                     <div><label className="block text-sm font-bold mb-1">密码</label><input value={formData.password} onChange={e => handleChange('password', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
+                                     <div><label className="block text-sm font-bold mb-1">等级</label><input type="number" min={(currentUser?.role_level||0)+1} max="9" value={formData.role_level} onChange={e => handleChange('role_level', Number(e.target.value))} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
                                  </div>
                              </div>
 
-                             {/* Permission Matrix */}
                              <div className="space-y-4">
-                                 <h3 className="font-bold border-b dark:border-gray-700 pb-2">功能权限矩阵</h3>
-                                 
-                                 {/* Logs */}
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
-                                     <label className="block font-bold mb-2">日志权限</label>
-                                     <div className="space-y-2">
-                                         <label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'A'} onChange={() => handleChange('logs_level', 'A', 'perm')} /> A级：查看系统级 + 任意撤销</label>
-                                         <label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'B'} onChange={() => handleChange('logs_level', 'B', 'perm')} /> B级：查看/撤销下级记录</label>
-                                         <label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'C'} onChange={() => handleChange('logs_level', 'C', 'perm')} /> C级：仅查看/撤销自己</label>
-                                     </div>
-                                 </div>
-
-                                 {/* Announcement */}
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
-                                     <label className="block font-bold mb-2">公告权限</label>
-                                     <div className="space-x-4">
-                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'PUBLISH'} onChange={() => handleChange('announcement_rule', 'PUBLISH', 'perm')} /> 发布公告</label>
-                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'VIEW'} onChange={() => handleChange('announcement_rule', 'VIEW', 'perm')} /> 仅接收</label>
-                                     </div>
-                                 </div>
-
-                                 {/* Store Scope */}
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded">
-                                     <label className="block font-bold mb-2">门店范围 (数据隔离)</label>
-                                     <div className="space-x-4 mb-3">
-                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'GLOBAL'} onChange={() => handleChange('store_scope', 'GLOBAL', 'perm')} /> 全局模式</label>
-                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'LIMITED'} onChange={() => handleChange('store_scope', 'LIMITED', 'perm')} /> 受限模式</label>
-                                     </div>
-                                     {formData.permissions?.store_scope === 'LIMITED' && (
-                                         <div className="pl-4 border-l-2 border-blue-500 grid grid-cols-2 gap-2">
-                                             {stores.map(s => (
-                                                 <label key={s.id} className="flex items-center gap-2">
-                                                     <input type="checkbox" checked={formData.allowed_store_ids?.includes(s.id)} onChange={(e) => handleStoreChange(s.id, e.target.checked)} />
-                                                     {s.name}
-                                                 </label>
-                                             ))}
-                                         </div>
-                                     )}
-                                 </div>
-                                 
-                                 {/* Misc */}
+                                 <h3 className="font-bold border-b dark:border-gray-700 pb-2">权限矩阵</h3>
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded"><label className="block font-bold mb-2">日志权限</label><div className="space-y-2"><label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'A'} onChange={() => handleChange('logs_level', 'A', 'perm')} /> A级</label><label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'B'} onChange={() => handleChange('logs_level', 'B', 'perm')} /> B级</label><label className="flex items-center gap-2"><input type="radio" name="logs" checked={formData.permissions?.logs_level === 'C'} onChange={() => handleChange('logs_level', 'C', 'perm')} /> C级</label></div></div>
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded"><label className="block font-bold mb-2">公告权限</label><div className="space-x-4"><label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'PUBLISH'} onChange={() => handleChange('announcement_rule', 'PUBLISH', 'perm')} /> 发布</label><label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'VIEW'} onChange={() => handleChange('announcement_rule', 'VIEW', 'perm')} /> 仅接收</label></div></div>
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded"><label className="block font-bold mb-2">门店范围</label><div className="space-x-4 mb-3"><label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'GLOBAL'} onChange={() => handleChange('store_scope', 'GLOBAL', 'perm')} /> 全局</label><label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'LIMITED'} onChange={() => handleChange('store_scope', 'LIMITED', 'perm')} /> 受限</label></div>{formData.permissions?.store_scope === 'LIMITED' && (<div className="pl-4 border-l-2 border-blue-500 grid grid-cols-2 gap-2">{stores.map(s => (<label key={s.id} className="flex items-center gap-2"><input type="checkbox" checked={formData.allowed_store_ids?.includes(s.id)} onChange={(e) => handleStoreChange(s.id, e.target.checked)} />{s.name}</label>))}</div>)}</div>
                                  <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded grid grid-cols-2 gap-4">
                                      <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.show_excel} onChange={(e) => handleChange('show_excel', e.target.checked, 'perm')} /> 显示 Excel 导出</label>
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_peers} onChange={(e) => handleChange('view_peers', e.target.checked, 'perm')} /> 可见同级用户</label>
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_self_in_list} onChange={(e) => handleChange('view_self_in_list', e.target.checked, 'perm')} /> 列表显示自己</label>
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_perm_page} onChange={(e) => handleChange('hide_perm_page', e.target.checked, 'perm')} /> 隐藏“权限设置”页</label>
-                                 </div>
-                                 
-                                 <div className="text-gray-500 text-xs mt-2">
-                                     * 删除模式：系统强制执行“全员全操作软删除”，不可配置。
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_peers} onChange={(e) => handleChange('view_peers', e.target.checked, 'perm')} /> 可见同级</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_self_in_list} onChange={(e) => handleChange('view_self_in_list', e.target.checked, 'perm')} /> 显示自己</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_perm_page} onChange={(e) => handleChange('hide_perm_page', e.target.checked, 'perm')} /> 隐藏权限页</label>
                                  </div>
                              </div>
                          </div>

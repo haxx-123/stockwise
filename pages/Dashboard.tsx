@@ -116,6 +116,30 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
      return Object.keys(data).map(key => ({ name: key, value: data[key] }));
   }, [batches, products]);
 
+  // Modal Tools Logic
+  const handleCopy = () => {
+      if(!detailModal) return;
+      const content = generatePageSummary('inventory', detailModal.data);
+      navigator.clipboard.writeText(content).then(() => alert("已复制内容"));
+  };
+  
+  const handleScreenshot = () => {
+      const el = document.getElementById('dashboard-modal-content');
+      if(el && html2canvas) {
+          html2canvas(el).then((canvas: any) => {
+              const link = document.createElement('a');
+              link.download = `dashboard_detail_${Date.now()}.png`;
+              link.href = canvas.toDataURL();
+              link.click();
+          });
+      } else alert("截图失败");
+  };
+
+  const handleExcel = () => {
+     if(!detailModal || !(window as any).XLSX) return;
+     alert("请使用电脑端进行完整 Excel 导出。移动端暂只支持复制。");
+  };
+
   const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
 
   if (loading) return <div className="p-8 flex justify-center text-gray-500 dark:text-gray-400">加载中...</div>;
@@ -143,7 +167,6 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 h-auto">
-          {/* Increased Height for Mobile Visibility */}
           <div className="bg-white dark:bg-gray-900 p-5 rounded-xl border dark:border-gray-800 shadow-sm flex flex-col h-80 md:h-80">
             <h3 className="text-sm font-bold dark:text-gray-200 mb-4">库存分类</h3>
             <div className="flex-1 min-h-0">
@@ -179,11 +202,18 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
           <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
               <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-5xl h-[80vh] flex flex-col shadow-2xl border dark:border-gray-700">
                   <div className="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
-                      <h2 className="text-xl font-bold dark:text-white">{detailModal.type === 'LOW' ? '低库存详情' : '即将过期详情'}</h2>
+                      <div className="flex items-center gap-3">
+                          <h2 className="text-xl font-bold dark:text-white">{detailModal.type === 'LOW' ? '低库存详情' : '即将过期详情'}</h2>
+                          {/* Modal Tools */}
+                          <div className="flex gap-1 ml-4">
+                             <button onClick={handleScreenshot} title="截图" className="p-1 hover:bg-gray-200 rounded">📷</button>
+                             <button onClick={handleCopy} title="复制" className="p-1 hover:bg-gray-200 rounded">📄</button>
+                             <button onClick={handleExcel} title="Excel" className="p-1 hover:bg-gray-200 rounded">📊</button>
+                          </div>
+                      </div>
                       <button onClick={() => setDetailModal(null)}><Icons.Minus size={24} /></button>
                   </div>
-                  <div className="flex-1 overflow-auto p-4 custom-scrollbar">
-                      {/* Reuse Inventory Table with onMobileClick enabled to allow expansion */}
+                  <div id="dashboard-modal-content" className="flex-1 overflow-auto p-4 custom-scrollbar">
                       <InventoryTable 
                         data={detailModal.data} 
                         onRefresh={() => {}} 
@@ -193,12 +223,8 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
                         selectedToDelete={new Set()}
                         selectedBatchIds={new Set()}
                         onMobileClick={(item: any) => { 
-                             // Basic toggle for mobile details inside this modal
-                             // For simplicity, we just rely on the table's internal expansion for Desktop
-                             // For Mobile, we might need a nested modal or simple expansion. 
-                             // The InventoryTable component supports both.
-                             // Passing a dummy handler effectively disables "Mobile Card Click" to full page, 
-                             // but we want expansion.
+                             // Navigate to inventory page on click
+                             onNavigate('inventory'); 
                         }}
                       />
                   </div>

@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
@@ -115,7 +114,8 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   const handleSelectAllOnPage = () => {
       const newProdSet = new Set(selectedToDelete);
       const newBatchSet = new Set(selectedBatchIds);
-      const allSelected = paginatedData.every(item => newProdSet.has(item.product.id));
+      
+      const allSelected = paginatedData.length > 0 && paginatedData.every(item => newProdSet.has(item.product.id));
 
       if (allSelected) {
           paginatedData.forEach(item => {
@@ -151,9 +151,18 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
     <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
       <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-4">
           <div className="flex flex-col md:flex-row gap-4 items-center">
-              <button onClick={() => deleteMode ? handleBulkDelete() : setDeleteMode(true)} className={`px-4 py-2 rounded-lg font-bold transition-colors w-full md:w-auto ${deleteMode ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
-                 {deleteMode ? `确认删除 (${selectedToDelete.size + selectedBatchIds.size})` : '删除 (管理)'}
-              </button>
+              <div className="flex items-center gap-2 w-full md:w-auto">
+                   <button onClick={() => deleteMode ? handleBulkDelete() : setDeleteMode(true)} className={`px-4 py-2 rounded-lg font-bold transition-colors w-full md:w-auto ${deleteMode ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
+                      {deleteMode ? `确认删除 (${selectedToDelete.size + selectedBatchIds.size})` : '删除 (管理)'}
+                   </button>
+                   {deleteMode && (
+                       <label className="flex items-center gap-1 cursor-pointer select-none">
+                           <input type="checkbox" onChange={handleSelectAllOnPage} className="w-5 h-5 accent-red-600 rounded border-2 border-white" />
+                           <span className="text-sm font-bold dark:text-white">全选本页</span>
+                       </label>
+                   )}
+              </div>
+              
               {deleteMode && <button onClick={()=>{setDeleteMode(false); setSelectedToDelete(new Set());}} className="text-gray-500 underline text-sm dark:text-gray-400">取消</button>}
 
               <div className="flex-1 relative w-full">
@@ -224,19 +233,14 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
     return (
         <>
         {/* DESKTOP TABLE */}
-        <div className={`bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm ${mobileExpanded ? 'block' : 'hidden md:block'}`}>
+        <div id="table-inventory" className={`bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm ${mobileExpanded ? 'block' : 'hidden md:block'}`}>
              <table className="w-full text-left border-collapse">
                 <thead className="bg-gray-100 dark:bg-gray-900 text-xs text-gray-600 dark:text-gray-400 uppercase font-semibold">
                     <tr>
                          <th className="px-6 py-4 w-10"></th>
                          {deleteMode && (
                              <th className="px-2 py-4 w-10 text-center">
-                                 {!mobileExpanded && (
-                                     <div className="flex items-center gap-1">
-                                        <input type="checkbox" onChange={handleSelectAllOnPage} className="w-4 h-4 rounded accent-blue-600" title="全选当前页" />
-                                        <span className="text-[10px] whitespace-nowrap">全选</span>
-                                     </div>
-                                 )}
+                                {/* Select all is in Header now */}
                              </th>
                          )}
                          <th className="px-6 py-4">商品名称</th>
@@ -329,8 +333,7 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
     );
 };
 
-// --- MODAL COMPONENTS ---
-
+// ... (Rest of Modal Components remain same)
 const EditProductModal = ({ product, onClose, onSuccess }: any) => {
     const [form, setForm] = useState({ name: product.name, sku: product.sku, category: product.category, unit_name: product.unit_name, split_unit_name: product.split_unit_name, split_ratio: product.split_ratio });
     const handleSave = async () => {

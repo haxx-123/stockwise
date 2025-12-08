@@ -1,5 +1,4 @@
 
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
@@ -77,7 +76,6 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
 
     // --- LOGIC ---
     const getTargetStoreId = () => {
-        // Strict Isolation: Use Global Store context
         if (currentStore === 'all') return null;
         return currentStore;
     };
@@ -99,7 +97,6 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                 const data = (window.XLSX).utils.sheet_to_json(ws, { header: 1 }); // Array of arrays
                 if (data.length < 1) return alert("Excel 为空");
                 
-                // Use "F0, F1, F2" style headers
                 const maxCols = data.reduce((max: number, row: any) => Math.max(max, row.length), 0);
                 const generatedHeaders = Array.from({length: maxCols}, (_, i) => `F${i}`);
                 
@@ -141,9 +138,6 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
             };
 
             for (const row of fileData) {
-                // Skip empty rows or header rows if user mapped something but row is string
-                // Actually header: 1 returns array of arrays.
-                
                 const name = sanitizeStr(getValue(row, 'name'));
                 const batch = sanitizeStr(getValue(row, 'batch'));
                 const qty = sanitizeInt(getValue(row, 'quantity'));
@@ -192,10 +186,6 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
             }
 
             if (productsToUpsert.length > 0) {
-                 // Upsert based on name + store_id uniqueness constraint? 
-                 // Supabase generic upsert might conflict if constraint not set. 
-                 // Assuming app logic handles it or unique index exists.
-                 // Ideally: productsToUpsert should filter distinct names first
                  const unique = Array.from(new Map(productsToUpsert.map(p => [p.name, p])).values());
                  await client.from('products').upsert(unique); 
             }
@@ -309,8 +299,30 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                     )}
                     {step === 2 && (
                         <div className="bg-white dark:bg-gray-900 p-6 rounded-xl border dark:border-gray-700 shadow-sm">
-                            <h3 className="text-lg font-bold mb-4">字段映射 (F0=第一列, F1=第二列...)</h3>
-                            <p className="text-xs text-gray-500 mb-4">请将下方的系统字段与您 Excel 中的列号(F0, F1...)对应。F0 代表 Excel 的第一列。</p>
+                            <h3 className="text-lg font-bold mb-4">字段映射</h3>
+                            
+                            {/* PREVIEW TABLE */}
+                            <div className="mb-6 overflow-x-auto border rounded dark:border-gray-700">
+                                <table className="w-full text-xs text-left">
+                                    <thead className="bg-gray-100 dark:bg-gray-800 font-bold">
+                                        <tr>
+                                            {headers.map(h => <th key={h} className="p-2 border-r last:border-0 dark:border-gray-700 text-center text-blue-600">{h}</th>)}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {fileData.slice(0, 3).map((row, i) => (
+                                            <tr key={i} className="border-t dark:border-gray-700">
+                                                {headers.map((_, colIdx) => (
+                                                    <td key={colIdx} className="p-2 border-r last:border-0 dark:border-gray-700 truncate max-w-[100px] text-gray-500">
+                                                        {row[colIdx]}
+                                                    </td>
+                                                ))}
+                                            </tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+                            </div>
+
                             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
                                 {Object.keys(FIELD_LABELS).map(key => (
                                     <div key={key} className="space-y-1">
@@ -342,6 +354,7 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
 
              {currentStore !== 'all' && mode === 'MANUAL' && (
                  <div className="bg-white dark:bg-gray-900 p-8 rounded-xl border dark:border-gray-700 shadow-sm max-w-4xl mx-auto space-y-6">
+                     {/* Manual form existing code ... */}
                      <h3 className="font-bold border-b dark:border-gray-700 pb-2 mb-4 dark:text-white">完整商品录入</h3>
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                         <div className="md:col-span-2"><label className="text-sm font-bold dark:text-gray-300">商品名称 *</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.name} onChange={e=>setManualForm({...manualForm, name: e.target.value})}/></div>

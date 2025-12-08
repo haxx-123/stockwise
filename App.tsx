@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
@@ -18,6 +17,7 @@ import { authService } from './services/authService';
 import { RichTextEditor } from './components/RichTextEditor';
 
 declare const window: any;
+declare const html2canvas: any;
 
 const LoginScreen = ({ onLogin }: any) => {
     const [user, setUser] = useState('');
@@ -29,9 +29,12 @@ const LoginScreen = ({ onLogin }: any) => {
     };
     return (
         <div className="min-h-screen flex items-center justify-center bg-gray-100 dark:bg-gray-900">
-            <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-xl w-full max-w-sm">
-                <h1 className="text-2xl font-bold text-center mb-8 dark:text-white">StockWise</h1>
-                <form onSubmit={handleSubmit} className="space-y-4">
+            <div className="bg-white dark:bg-gray-800 p-8 rounded-xl shadow-xl w-full max-w-sm text-center">
+                <div className="w-16 h-16 bg-blue-600 rounded-xl flex items-center justify-center text-white shadow-lg mx-auto mb-6">
+                    <Icons.Box size={40} />
+                </div>
+                <h1 className="text-2xl font-bold mb-8 dark:text-white">StockWise</h1>
+                <form onSubmit={handleSubmit} className="space-y-4 text-left">
                     {error && <div className="text-red-500 text-sm text-center">{error}</div>}
                     <input className="w-full border p-3 rounded-lg dark:bg-gray-700 dark:text-white" placeholder="用户名" value={user} onChange={e=>setUser(e.target.value)} />
                     <input type="password" className="w-full border p-3 rounded-lg dark:bg-gray-700 dark:text-white" placeholder="密码" value={pass} onChange={e=>setPass(e.target.value)} />
@@ -44,7 +47,7 @@ const LoginScreen = ({ onLogin }: any) => {
 
 // --- ANNOUNCEMENT SYSTEM ---
 const AnnouncementOverlay = ({ onClose }: any) => {
-    const [view, setView] = useState<'MY_LIST' | 'DETAIL' | 'MANAGE_SELECT' | 'MANAGE_LIST'>('MY_LIST');
+    const [view, setView] = useState<'MY_LIST' | 'DETAIL' | 'MANAGE_SELECT' | 'MANAGE_LIST' | 'PUBLISH'>('MY_LIST');
     const [anns, setAnns] = useState<Announcement[]>([]);
     const [detailAnn, setDetailAnn] = useState<Announcement | null>(null);
     const [selectedUserForManage, setSelectedUserForManage] = useState<string>('');
@@ -52,9 +55,8 @@ const AnnouncementOverlay = ({ onClose }: any) => {
     const [manageMode, setManageMode] = useState(false);
     
     // Publish State
-    const [publishMode, setPublishMode] = useState(false);
     const [newTitle, setNewTitle] = useState('');
-    const [newContent, setNewContent] = useState(''); // HTML
+    const [newContent, setNewContent] = useState('');
     const [targetUsers, setTargetUsers] = useState<Set<string>>(new Set());
     const [popupEnabled, setPopupEnabled] = useState(false);
     const [popupDuration, setPopupDuration] = useState('ONCE');
@@ -68,14 +70,12 @@ const AnnouncementOverlay = ({ onClose }: any) => {
 
     const loadMyAnns = async () => {
         const all = await dataService.getAnnouncements();
-        // Show only if not force deleted AND (targeted OR public) AND (not hidden by self)
         const myId = user?.id || '';
         const my = all.filter(a => 
             !a.is_force_deleted && 
             (!a.target_users?.length || a.target_users.includes(myId)) && 
             !a.read_by?.includes(`HIDDEN_BY_${myId}`)
         );
-        // Popup check logic could go here to auto-open detail
         setAnns(my);
     };
 
@@ -102,60 +102,71 @@ const AnnouncementOverlay = ({ onClose }: any) => {
             target_users: Array.from(targetUsers), valid_until: new Date(Date.now() + 86400000 * 365).toISOString(),
             popup_config: { enabled: popupEnabled, duration: popupDuration }
         });
-        alert("发布成功"); setPublishMode(false); loadMyAnns();
+        alert("发布成功"); setView('MY_LIST'); loadMyAnns();
     };
 
-    // Render Logic
-    if (publishMode) {
-        return (
-            <div className="fixed inset-0 bg-white dark:bg-gray-900 z-[100] flex flex-col animate-fade-in">
-                <div className="p-4 border-b flex justify-between items-center bg-gray-50 dark:bg-gray-800">
-                    <h2 className="font-bold dark:text-white">发布公告</h2>
-                    <button onClick={()=>setPublishMode(false)} className="text-gray-500 dark:text-gray-300">取消</button>
-                </div>
-                <div className="p-4 flex-1 overflow-y-auto space-y-4 max-w-3xl mx-auto w-full custom-scrollbar pb-24">
-                    <input className="w-full border p-3 rounded text-lg font-bold dark:bg-gray-800 dark:border-gray-600 dark:text-white" placeholder="标题" value={newTitle} onChange={e=>setNewTitle(e.target.value)} />
-                    <RichTextEditor value={newContent} onChange={setNewContent} />
-                     <div className="border p-4 rounded h-40 overflow-y-auto dark:border-gray-600">
-                        <label className="block font-bold mb-2 dark:text-white">接收对象</label>
-                        {users.map(u => <label key={u.id} className="block dark:text-gray-300"><input type="checkbox" onChange={e=>{const s=new Set(targetUsers); if(e.target.checked)s.add(u.id); else s.delete(u.id); setTargetUsers(s)}}/> {u.username}</label>)}
-                     </div>
-                     <label className="flex items-center gap-2 dark:text-white"><input type="checkbox" checked={popupEnabled} onChange={e=>setPopupEnabled(e.target.checked)}/> 强制弹窗</label>
-                     {popupEnabled && (
-                         <select value={popupDuration} onChange={e=>setPopupDuration(e.target.value as any)} className="border p-2 rounded dark:bg-gray-800 dark:text-white">
-                             <option value="ONCE">一次性</option>
-                             <option value="DAY">每天</option>
-                             <option value="FOREVER">永久</option>
-                         </select>
-                     )}
-                     <button onClick={handlePublish} className="w-full bg-blue-600 text-white py-3 rounded font-bold">发布</button>
-                </div>
-            </div>
-        );
-    }
-
+    // --- FULL PAGE DETAIL (Overlay) ---
     if (view === 'DETAIL' && detailAnn) {
         return (
-             <div className="fixed inset-0 bg-white dark:bg-gray-900 z-[100] flex flex-col animate-fade-in">
-                 <div className="p-4 border-b flex justify-between items-center bg-gray-50 dark:bg-gray-800">
-                     <button onClick={()=>setView(manageMode ? 'MANAGE_LIST' : 'MY_LIST')}><Icons.ArrowRightLeft className="rotate-180 dark:text-white" size={24}/></button>
-                     <h2 className="font-bold dark:text-white">公告详情</h2>
-                     <div className="w-6"></div>
+             <div className="fixed inset-0 bg-white dark:bg-gray-900 z-[100] flex flex-col animate-fade-in w-full h-full">
+                 <div className="p-4 border-b flex justify-between items-center bg-gray-50 dark:bg-gray-800 shrink-0">
+                     <button onClick={()=>setView(manageMode ? 'MANAGE_LIST' : 'MY_LIST')} className="p-2 bg-gray-200 dark:bg-gray-700 rounded-full"><Icons.ArrowRightLeft className="rotate-180 dark:text-white" size={24}/></button>
+                     <h2 className="font-bold dark:text-white truncate mx-4 flex-1 text-center">公告详情</h2>
+                     <div className="w-10"></div>
                  </div>
-                 <div className="p-6 overflow-y-auto max-w-3xl mx-auto w-full custom-scrollbar">
-                     <h1 className="text-2xl font-bold mb-2 dark:text-white">{detailAnn.title}</h1>
-                     <div className="text-xs text-gray-500 mb-6 flex gap-4"><span>发布人: {detailAnn.creator}</span><span>{new Date(detailAnn.created_at).toLocaleString()}</span></div>
+                 <div className="p-6 overflow-y-auto w-full custom-scrollbar flex-1 bg-white dark:bg-gray-900">
+                     <h1 className="text-2xl font-bold mb-4 dark:text-white">{detailAnn.title}</h1>
+                     <div className="text-xs text-gray-500 mb-8 flex gap-4 border-b pb-4 dark:border-gray-700">
+                         <span>发布人: {detailAnn.creator}</span>
+                         <span>{new Date(detailAnn.created_at).toLocaleString()}</span>
+                     </div>
                      <div className="prose dark:prose-invert max-w-none dark:text-gray-300" dangerouslySetInnerHTML={{__html: detailAnn.content}} />
                  </div>
              </div>
         );
     }
 
+    // --- PUBLISH PAGE (Within Modal) ---
+    if (view === 'PUBLISH') {
+        return (
+            <div className="fixed inset-0 bg-white dark:bg-gray-900 z-[100] flex flex-col animate-fade-in">
+                <div className="p-4 border-b flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                    <h2 className="font-bold dark:text-white">发布新公告</h2>
+                    <button onClick={()=>setView('MY_LIST')} className="text-gray-500 dark:text-gray-300">取消</button>
+                </div>
+                <div className="p-4 flex-1 overflow-y-auto space-y-4 max-w-4xl mx-auto w-full custom-scrollbar pb-24">
+                    <input className="w-full border p-3 rounded text-lg font-bold dark:bg-gray-800 dark:border-gray-600 dark:text-white" placeholder="公告标题" value={newTitle} onChange={e=>setNewTitle(e.target.value)} />
+                    <RichTextEditor value={newContent} onChange={setNewContent} />
+                     
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                         <div className="border p-4 rounded h-40 overflow-y-auto dark:border-gray-600 custom-scrollbar">
+                            <label className="block font-bold mb-2 dark:text-white">接收对象 (不选则全员)</label>
+                            {users.map(u => <label key={u.id} className="block dark:text-gray-300"><input type="checkbox" onChange={e=>{const s=new Set(targetUsers); if(e.target.checked)s.add(u.id); else s.delete(u.id); setTargetUsers(s)}}/> {u.username}</label>)}
+                         </div>
+                         <div className="space-y-4 border p-4 rounded dark:border-gray-600">
+                             <label className="flex items-center gap-2 dark:text-white font-bold"><input type="checkbox" checked={popupEnabled} onChange={e=>setPopupEnabled(e.target.checked)}/> 强制弹窗提醒</label>
+                             {popupEnabled && (
+                                 <select value={popupDuration} onChange={e=>setPopupDuration(e.target.value as any)} className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white">
+                                     <option value="ONCE">一次性</option>
+                                     <option value="DAY">每天</option>
+                                     <option value="FOREVER">永久</option>
+                                 </select>
+                             )}
+                         </div>
+                     </div>
+                     <button onClick={handlePublish} className="w-full bg-blue-600 text-white py-3 rounded font-bold shadow-lg">发布公告</button>
+                </div>
+            </div>
+        );
+    }
+
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 animate-fade-in">
             <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-4xl h-[90vh] flex flex-col shadow-2xl overflow-hidden relative">
-                <div className="flex border-b bg-gray-50 dark:bg-gray-800 dark:border-gray-700">
+                {/* Header */}
+                <div className="flex border-b bg-gray-50 dark:bg-gray-800 dark:border-gray-700 shrink-0">
                     <button onClick={()=>{setView('MY_LIST'); setManageMode(false); loadMyAnns();}} className={`flex-1 py-4 font-bold ${!manageMode ? 'text-blue-600 border-b-2 border-blue-600 bg-white dark:bg-gray-900' : 'text-gray-500'}`}>我的公告</button>
+                    {perms.can_publish_announcements && <button onClick={()=>{setView('PUBLISH');}} className="flex-1 py-4 font-bold text-gray-500 hover:bg-white hover:text-green-600">发布公告</button>}
                     {perms.can_publish_announcements && <button onClick={()=>{setView('MANAGE_SELECT'); setManageMode(true);}} className={`flex-1 py-4 font-bold ${manageMode ? 'text-blue-600 border-b-2 border-blue-600 bg-white dark:bg-gray-900' : 'text-gray-500'}`}>公告管理</button>}
                     <button onClick={onClose} className="px-6 text-gray-400 hover:bg-red-50"><Icons.Minus size={24}/></button>
                 </div>
@@ -164,20 +175,21 @@ const AnnouncementOverlay = ({ onClose }: any) => {
                      {view === 'MY_LIST' && (
                          <>
                             <div className="flex justify-between mb-4">
-                                <button onClick={()=>deleteMode?handleDelete():setDeleteMode(true)} className={`px-4 py-2 rounded font-bold ${deleteMode?'bg-red-600 text-white':'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>{deleteMode ? '确认删除' : '删除'}</button>
+                                <button onClick={()=>deleteMode?handleDelete():setDeleteMode(true)} className={`px-4 py-2 rounded font-bold ${deleteMode?'bg-red-600 text-white':'bg-gray-200 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>{deleteMode ? '确认删除' : '删除 (隐藏)'}</button>
                                 {deleteMode && <button onClick={()=>setDeleteMode(false)} className="px-4 py-2 text-gray-500">取消</button>}
                             </div>
                             <div className="space-y-2">
                                 {anns.map(a => (
-                                    <div key={a.id} onClick={()=>{if(!deleteMode){setDetailAnn(a); setView('DETAIL');}}} className="p-4 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center gap-3 cursor-pointer hover:shadow-md">
+                                    <div key={a.id} onClick={()=>{if(!deleteMode){setDetailAnn(a); setView('DETAIL');}}} className="p-4 bg-white dark:bg-gray-800 rounded border dark:border-gray-700 flex items-center gap-3 cursor-pointer hover:shadow-md transition-shadow">
                                         {deleteMode && <input type="checkbox" onClick={e=>e.stopPropagation()} onChange={e=>{const s=new Set(selectedToDelete); if(e.target.checked)s.add(a.id); else s.delete(a.id); setSelectedToDelete(s)}} className="w-5 h-5" />}
                                         <div className="flex-1">
-                                            <div className="font-bold dark:text-white">{a.title}</div>
-                                            <div className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString()} - {a.creator}</div>
+                                            <div className="font-bold dark:text-white text-lg">{a.title}</div>
+                                            <div className="text-xs text-gray-400 mt-1">{new Date(a.created_at).toLocaleDateString()} - {a.creator}</div>
                                         </div>
+                                        <Icons.ChevronRight className="text-gray-300"/>
                                     </div>
                                 ))}
-                                {anns.length === 0 && <div className="text-center text-gray-400 py-10">无公告</div>}
+                                {anns.length === 0 && <div className="text-center text-gray-400 py-10">暂无公告</div>}
                             </div>
                          </>
                      )}
@@ -190,9 +202,6 @@ const AnnouncementOverlay = ({ onClose }: any) => {
                                  <option value={user?.id}>我自己 ({user?.username})</option>
                                  {users.filter(u => u.role_level > (user?.role_level||0)).map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
                              </select>
-                             <div className="border-t pt-4 mt-4 dark:border-gray-700">
-                                <button onClick={()=>setPublishMode(true)} className="w-full bg-green-600 text-white py-3 rounded font-bold shadow">发布新公告</button>
-                             </div>
                          </div>
                      )}
 
@@ -244,6 +253,15 @@ const App: React.FC = () => {
   // LAYOUT LOCKING
   useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
   
+  // PERMISSION REDIRECT FOR INIT ACCOUNT
+  useEffect(() => {
+      if (isAuthenticated && perms.only_view_config) {
+          if (currentPage !== 'settings-config') {
+              setCurrentPage('settings-config');
+          }
+      }
+  }, [isAuthenticated, currentPage, perms.only_view_config]);
+
   useEffect(() => {
     localStorage.setItem('sw_theme', theme);
     document.documentElement.classList.toggle('dark', theme === 'dark');
@@ -265,12 +283,10 @@ const App: React.FC = () => {
   const handleCopyText = async () => {
       let content = "当前页面不支持复制";
       const format = (d: any) => generatePageSummary(currentPage, d);
-      
       try {
           if (currentPage === 'inventory') {
              const prods = await dataService.getProducts(false, currentStore);
              const batches = await dataService.getBatches(currentStore==='all'?undefined:currentStore);
-             // Quick Aggregation
              const agg = prods.map(p => ({
                  product: p,
                  totalQuantity: batches.filter(b=>b.product_id===p.id).reduce((s,b)=>s+b.quantity,0),
@@ -289,7 +305,53 @@ const App: React.FC = () => {
       } catch(e) { alert("复制失败"); }
   };
 
-  const handleExcel = () => { if(perms.can_export_excel) alert("请使用桌面端进行完整导出（移动端仅支持复制文本）"); };
+  const handleScreenshot = () => {
+      const targetId = currentPage === 'inventory' ? 'table-inventory' : (currentPage === 'logs' ? 'table-logs' : 'main-content-area');
+      const el = document.getElementById(targetId) || document.getElementById('main-content-area');
+      if (el && html2canvas) {
+          html2canvas(el).then((canvas: any) => {
+              const link = document.createElement('a');
+              link.download = `screenshot_${currentPage}_${Date.now()}.png`;
+              link.href = canvas.toDataURL();
+              link.click();
+          });
+      } else alert("截图失败");
+  };
+
+  const handleExcel = () => {
+      if(!['inventory','logs','audit','settings-perms'].includes(currentPage)) {
+          return alert("此页面不支持导出 Excel");
+      }
+      if(!(window as any).XLSX) return alert("导出组件未加载");
+
+      // We need to fetch current visible data again or access state (simplified here by fetching)
+      // Ideally, pass data from components up, but for this structure we re-fetch to keep it simple.
+      (async () => {
+          let data: any[] = [];
+          if(currentPage === 'inventory') {
+             const p = await dataService.getProducts(false, currentStore);
+             const b = await dataService.getBatches(currentStore==='all'?undefined:currentStore);
+             data = p.map(prod => ({
+                 商品: prod.name,
+                 SKU: prod.sku,
+                 总库存: prod.split_ratio ? `${Math.floor(b.filter(x=>x.product_id===prod.id).reduce((s,i)=>s+i.quantity,0)/prod.split_ratio)}${prod.unit_name}` : b.filter(x=>x.product_id===prod.id).reduce((s,i)=>s+i.quantity,0)
+             }));
+          } else if(currentPage === 'logs') {
+              const l = await dataService.getTransactions('ALL', 200);
+              data = l.map(x => ({
+                  时间: x.timestamp, 操作人: x.operator, 类型: x.type, 商品: x.product?.name, 数量: x.quantity
+              }));
+          } else if(currentPage === 'audit') {
+               const a = await dataService.getAuditLogs(100);
+               data = a.map(x => ({ID: x.id, 表: x.table_name, 操作: x.operation, 时间: x.timestamp}));
+          }
+
+          const ws = (window as any).XLSX.utils.json_to_sheet(data);
+          const wb = (window as any).XLSX.utils.book_new();
+          (window as any).XLSX.utils.book_append_sheet(wb, ws, "Export");
+          (window as any).XLSX.writeFile(wb, `StockWise_Export_${currentPage}.xlsx`);
+      })();
+  };
 
   if (!isAuthenticated) return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
 
@@ -308,7 +370,7 @@ const App: React.FC = () => {
 
   return (
     <div className="h-screen bg-gray-50 dark:bg-gray-950 flex font-sans text-gray-800 dark:text-gray-100 overflow-hidden">
-      <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} currentStore={currentStore} hasUnread={false} />
+      {!perms.only_view_config && <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} currentStore={currentStore} hasUnread={false} />}
       
       <div className="flex-1 flex flex-col h-full relative">
         <header className="bg-white dark:bg-gray-900 border-b border-gray-200 dark:border-gray-800 shadow-sm px-4 py-3 flex items-center justify-between z-20 shrink-0 h-16">
@@ -322,22 +384,24 @@ const App: React.FC = () => {
                     {toolsOpen && (
                         <div className="absolute right-0 top-12 bg-white dark:bg-gray-800 border dark:border-gray-700 shadow-xl rounded-xl w-48 flex flex-col z-50 overflow-hidden animate-fade-in">
                             <button onClick={()=>{setAnnouncementOpen(true); setToolsOpen(false);}} className="p-3 text-left border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">📢 公告</button>
-                            <button onClick={()=>{alert('截图功能暂未集成'); setToolsOpen(false);}} className="p-3 text-left border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">📷 截图</button>
+                            <button onClick={()=>{handleScreenshot(); setToolsOpen(false);}} className="p-3 text-left border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">📷 截图</button>
                             {['inventory','logs','audit','settings-perms'].includes(currentPage) && 
                                 <button onClick={()=>{handleCopyText(); setToolsOpen(false);}} className="p-3 text-left border-b dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700">📄 复制文字</button>
                             }
-                            {perms.can_export_excel && 
+                            {['inventory','logs','audit','settings-perms'].includes(currentPage) && 
                                 <button onClick={()=>{handleExcel(); setToolsOpen(false);}} className="p-3 text-left hover:bg-gray-50 dark:hover:bg-gray-700">📊 Excel 导出</button>
                             }
                         </div>
                     )}
                 </div>
 
-                {/* Store Selector */}
-                <button onClick={() => setStoreModalOpen(true)} className="flex items-center bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-3 py-2 rounded-lg font-medium text-xs md:text-sm truncate max-w-[120px]">
-                    <Icons.Store size={16} className="mr-1" />
-                    <span>{currentStore === 'all' ? (user?.permissions.store_scope === 'LIMITED' ? '可用门店' : '所有门店') : stores.find(s=>s.id===currentStore)?.name || '门店'}</span>
-                </button>
+                {/* Store Selector (Hidden for Init Account) */}
+                {!perms.only_view_config && (
+                    <button onClick={() => setStoreModalOpen(true)} className="flex items-center bg-blue-50 dark:bg-blue-900/40 text-blue-700 dark:text-blue-300 px-3 py-2 rounded-lg font-medium text-xs md:text-sm truncate max-w-[120px]">
+                        <Icons.Store size={16} className="mr-1" />
+                        <span>{currentStore === 'all' ? (user?.permissions.store_scope === 'LIMITED' ? '可用门店' : '所有门店') : stores.find(s=>s.id===currentStore)?.name || '门店'}</span>
+                    </button>
+                )}
             </div>
         </header>
 
@@ -347,7 +411,7 @@ const App: React.FC = () => {
         </div>
       </div>
 
-      {storeModalOpen && (
+      {storeModalOpen && !perms.only_view_config && (
           <StoreManager isOpen={storeModalOpen} onClose={() => setStoreModalOpen(false)} stores={stores} currentStore={currentStore} setStore={setCurrentStore} refresh={refreshStores} />
       )}
       {announcementOpen && <AnnouncementOverlay onClose={() => setAnnouncementOpen(false)} />}
@@ -355,6 +419,7 @@ const App: React.FC = () => {
   );
 };
 
+// ... StoreManager component (same as before) ...
 const StoreManager = ({ onClose, stores, currentStore, setStore, refresh }: any) => {
     const user = authService.getCurrentUser();
     const visibleStores = user?.permissions.store_scope === 'LIMITED' ? stores.filter((s:any) => user.allowed_store_ids.includes(s.id)) : stores;
