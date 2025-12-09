@@ -1,6 +1,4 @@
 
-
-
 export type Store = {
   id: string;
   name: string;
@@ -67,8 +65,8 @@ export type AuditLog = {
 // 0-9: Lower is higher power. 00 is Admin.
 export type RoleLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
-// The structure for the Global Matrix Row
-export interface RolePermissionRule {
+// Interface for app logic compatibility
+export interface UserPermissions {
     role_level: RoleLevel;
     logs_level: 'A' | 'B' | 'C' | 'D';
     announcement_rule: 'PUBLISH' | 'VIEW';
@@ -82,19 +80,32 @@ export interface RolePermissionRule {
     only_view_config: boolean;
 }
 
-export type UserPermissions = RolePermissionRule; // Alias for backward compatibility in types
-
-export type RolePermissionMatrix = Record<RoleLevel, RolePermissionRule>;
+export type RolePermissionMatrix = Record<RoleLevel, UserPermissions>;
 
 export type User = {
   id: string;
   username: string;
   password?: string; 
   role_level: RoleLevel; 
-  permissions: UserPermissions; // Still kept on user for specific overrides or cache, but logic should prefer Matrix
-  allowed_store_ids: string[]; // For LIMITED scope
-  is_archived?: boolean; // Soft Delete
-  face_descriptor?: string | null; // Base64 of face image or descriptor
+  
+  // App Logic Helper (Computed from flat fields below)
+  permissions: UserPermissions; 
+  
+  allowed_store_ids: string[]; 
+  is_archived?: boolean; 
+  face_descriptor?: string | null;
+
+  // Direct Database Columns (Per-User Permissions)
+  logs_level?: 'A' | 'B' | 'C' | 'D';
+  announcement_rule?: 'PUBLISH' | 'VIEW';
+  store_scope?: 'GLOBAL' | 'LIMITED';
+  show_excel?: boolean;
+  view_peers?: boolean;
+  view_self_in_list?: boolean;
+  hide_perm_page?: boolean;
+  hide_audit_hall?: boolean;
+  hide_store_management?: boolean;
+  only_view_config?: boolean;
 };
 
 export type Announcement = {

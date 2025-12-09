@@ -1,9 +1,8 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
 import { dataService } from '../services/dataService';
-import { User, Store, UserPermissions, RoleLevel, RolePermissionRule } from '../types';
+import { User, Store, UserPermissions, RoleLevel } from '../types';
 import { Icons } from '../components/Icons';
 import { UsernameBadge } from '../components/UsernameBadge';
 import { SVIPBadge } from '../components/SVIPBadge';
@@ -33,97 +32,60 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
         if (onThemeChange) onThemeChange(theme);
     };
     
-    // UPDATED SQL SCRIPT
+    // UPDATED SQL SCRIPT FOR PER-USER PERMISSIONS
     const sqlScript = `
--- STOCKWISE V3.1.0 MATRIX UPDATE
+-- STOCKWISE V4.0 PER-USER MATRIX UPDATE
 -- SQL是/否较上一次发生更改: 是
 -- SQL是/否必须包含重置数据库: 否
 
--- Enable UUID extension
-CREATE EXTENSION IF NOT EXISTS "pgcrypto";
-
 DO $$ 
 BEGIN 
-    -- 1. Role Permissions Matrix Table
-    CREATE TABLE IF NOT EXISTS role_permissions (
-        role_level integer PRIMARY KEY
-    );
-    
-    -- Ensure Columns Exist for Matrix
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='logs_level') THEN
-        ALTER TABLE role_permissions ADD COLUMN logs_level text DEFAULT 'D';
+    -- 1. Add Permission Columns to USERS table directly
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='logs_level') THEN
+        ALTER TABLE users ADD COLUMN logs_level text DEFAULT 'D';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='announcement_rule') THEN
-        ALTER TABLE role_permissions ADD COLUMN announcement_rule text DEFAULT 'VIEW';
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='announcement_rule') THEN
+        ALTER TABLE users ADD COLUMN announcement_rule text DEFAULT 'VIEW';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='store_scope') THEN
-        ALTER TABLE role_permissions ADD COLUMN store_scope text DEFAULT 'LIMITED';
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='store_scope') THEN
+        ALTER TABLE users ADD COLUMN store_scope text DEFAULT 'LIMITED';
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='show_excel') THEN
-        ALTER TABLE role_permissions ADD COLUMN show_excel boolean DEFAULT false;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='show_excel') THEN
+        ALTER TABLE users ADD COLUMN show_excel boolean DEFAULT false;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='view_peers') THEN
-        ALTER TABLE role_permissions ADD COLUMN view_peers boolean DEFAULT false;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='view_peers') THEN
+        ALTER TABLE users ADD COLUMN view_peers boolean DEFAULT false;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='view_self_in_list') THEN
-        ALTER TABLE role_permissions ADD COLUMN view_self_in_list boolean DEFAULT true;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='view_self_in_list') THEN
+        ALTER TABLE users ADD COLUMN view_self_in_list boolean DEFAULT true;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='hide_perm_page') THEN
-        ALTER TABLE role_permissions ADD COLUMN hide_perm_page boolean DEFAULT true;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='hide_perm_page') THEN
+        ALTER TABLE users ADD COLUMN hide_perm_page boolean DEFAULT true;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='hide_audit_hall') THEN
-        ALTER TABLE role_permissions ADD COLUMN hide_audit_hall boolean DEFAULT true;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='hide_audit_hall') THEN
+        ALTER TABLE users ADD COLUMN hide_audit_hall boolean DEFAULT true;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='hide_store_management') THEN
-        ALTER TABLE role_permissions ADD COLUMN hide_store_management boolean DEFAULT true;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='hide_store_management') THEN
+        ALTER TABLE users ADD COLUMN hide_store_management boolean DEFAULT true;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='only_view_config') THEN
-        ALTER TABLE role_permissions ADD COLUMN only_view_config boolean DEFAULT false;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='only_view_config') THEN
+        ALTER TABLE users ADD COLUMN only_view_config boolean DEFAULT false;
     END IF;
 
-    -- Drop legacy 'permissions' column from users/role_permissions if exists
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='permissions') THEN
-        ALTER TABLE role_permissions DROP COLUMN permissions;
-    END IF;
-    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='permissions') THEN
-         ALTER TABLE users DROP COLUMN permissions;
-    END IF;
+    -- 2. Clean up legacy tables/columns if desired (Optional, keeping safe for now)
+    -- DROP TABLE IF EXISTS role_permissions; 
 
-    -- 2. Init Default Data
-    INSERT INTO role_permissions (role_level, logs_level, announcement_rule, store_scope, show_excel, view_peers, view_self_in_list, hide_perm_page, hide_audit_hall, hide_store_management, only_view_config)
-    VALUES 
-    (0, 'A', 'PUBLISH', 'GLOBAL', true, true, true, false, false, false, false),
-    (1, 'A', 'PUBLISH', 'GLOBAL', true, true, true, false, false, false, false),
-    (2, 'B', 'VIEW', 'GLOBAL', true, true, true, false, false, true, false),
-    (3, 'C', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
-    (4, 'C', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
-    (5, 'C', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
-    (6, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
-    (7, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
-    (8, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
-    (9, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false)
-    ON CONFLICT (role_level) DO NOTHING;
-
-    -- 3. Create Live View
+    -- 3. Update Live View (Now just a pass-through for convenience)
     DROP VIEW IF EXISTS live_users_v;
     CREATE VIEW live_users_v AS
-    SELECT 
-        u.id, u.username, u.password, u.role_level, u.allowed_store_ids, u.is_archived, u.face_descriptor,
-        rp.logs_level, rp.announcement_rule, rp.store_scope, rp.show_excel, rp.view_peers, 
-        rp.view_self_in_list, rp.hide_perm_page, rp.hide_audit_hall, rp.hide_store_management, rp.only_view_config
-    FROM users u
-    LEFT JOIN role_permissions rp ON u.role_level = rp.role_level;
+    SELECT * FROM users;
 
-    -- 4. Realtime
-    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'role_permissions') THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE role_permissions;
+    -- 4. Enable Realtime on Users Table
+    -- Note: You must enable Replica Identity Full or Default to get old/new values, 
+    -- usually Default is fine for Updates if PK exists.
+    IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'users') THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE users;
     END IF;
-
-    -- 5. Helper Logic for Stores (Ensure table exists)
-    CREATE TABLE IF NOT EXISTS stores (id text PRIMARY KEY, name text, location text, is_archived boolean default false);
-
-    -- 6. Helper Logic for Users (Ensure table exists)
-    CREATE TABLE IF NOT EXISTS users (id text PRIMARY KEY, username text, password text, role_level int, allowed_store_ids text[], is_archived boolean default false, face_descriptor text);
 
 END $$;
 `;
@@ -186,24 +148,17 @@ END $$;
 const PermissionsSettings = () => {
     const currentUser = authService.getCurrentUser();
     const { getPermission } = usePermissionContext(); 
-    const client = getSupabaseClient();
 
-    // -- State for User List --
     const [subordinates, setSubordinates] = useState<User[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [userFormData, setUserFormData] = useState<Partial<User>>({});
     
-    // -- State for Matrix --
-    const [activeMatrixRole, setActiveMatrixRole] = useState<RoleLevel>(currentUser?.role_level || 0);
-    const [matrixConfig, setMatrixConfig] = useState<RolePermissionRule | null>(null);
-
     // Initial Load
     useEffect(() => {
         loadUsers();
-        fetchMatrixConfig(activeMatrixRole);
-    }, [activeMatrixRole]);
+    }, []);
 
     const loadUsers = async () => {
         if (!currentUser) return;
@@ -222,7 +177,6 @@ const PermissionsSettings = () => {
         if (!myPerms.view_self_in_list) {
             subs = subs.filter(u => u.id !== currentUser.id);
         } else {
-            // Ensure self is in list if not already
             if (!subs.find(u => u.id === currentUser.id)) {
                 const me = users.find(u => u.id === currentUser.id);
                 if (me) subs.unshift(me);
@@ -232,28 +186,9 @@ const PermissionsSettings = () => {
         setStores(allStores);
     };
 
-    const fetchMatrixConfig = async (role: RoleLevel) => {
-        if (!client) return;
-        const { data } = await client.from('role_permissions').select('*').eq('role_level', role).single();
-        if (data) setMatrixConfig(data);
-        else {
-             // Fallback default
-            setMatrixConfig({ ...DEFAULT_PERMISSIONS, role_level: role });
-        }
-    };
-
-    // -- Matrix Handlers --
-    const updateMatrix = async (updates: Partial<RolePermissionRule>) => {
-        if (!client || !matrixConfig) return;
-        const newConfig = { ...matrixConfig, ...updates };
-        setMatrixConfig(newConfig); // Optimistic UI
-        await client.from('role_permissions').upsert(newConfig);
-    };
-
     // -- User Modal Handlers --
     const handleEditUser = (user: User | null) => {
         if (user) {
-            // Logic: Can modify Self. Can Create Peer. Cannot Modify Peer (unless self).
             if (currentUser && user.role_level === currentUser.role_level && user.id !== currentUser.id) {
                 alert("无权修改同级用户 (仅可查看/删除/新建)");
                 return;
@@ -263,15 +198,17 @@ const PermissionsSettings = () => {
                  return;
             }
             setEditingUser(user);
+            // Deep copy user data for editing
             setUserFormData(JSON.parse(JSON.stringify(user)));
         } else {
-            // Create New
+            // Create New: Default Permissions
             const myPerms = getPermission(currentUser?.role_level || 0);
             setEditingUser(null);
             setUserFormData({
                 username: '', password: '123', 
                 role_level: (myPerms.view_peers ? currentUser?.role_level : (currentUser?.role_level || 0) + 1) as RoleLevel,
-                allowed_store_ids: []
+                allowed_store_ids: [],
+                ...DEFAULT_PERMISSIONS // Spread defaults
             });
         }
         setIsUserModalOpen(true);
@@ -287,15 +224,12 @@ const PermissionsSettings = () => {
         if (inputLevel < myLevel) return alert("不能将用户等级设置高于您自己的等级");
 
         if (editingUser) {
-             // Editing Existing
-             // Cannot Promote (decrease level number below original)
              if (inputLevel < editingUser.role_level) return alert("权限等级只能往低修改 (数字变大，不可往高修改！");
         } 
 
         try {
-            const { permissions, ...payload } = userFormData as any; 
-            if (editingUser) await dataService.updateUser(editingUser.id, payload);
-            else await dataService.createUser(payload);
+            if (editingUser) await dataService.updateUser(editingUser.id, userFormData);
+            else await dataService.createUser(userFormData);
             setIsUserModalOpen(false);
             loadUsers();
         } catch(e: any) { alert(e.message); }
@@ -306,119 +240,10 @@ const PermissionsSettings = () => {
         if(confirm("确定删除该用户？(软删除)")) { await dataService.deleteUser(u.id); loadUsers(); }
     };
 
-    // -- Render --
     return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto dark:text-gray-100 flex flex-col gap-8">
              
-             {/* 1. PERMISSION MATRIX SECTION */}
-             <div className="bg-gray-800 rounded-xl p-6 shadow-lg border border-gray-700">
-                 <div className="flex justify-between items-center mb-6">
-                     <h2 className="text-xl font-bold text-white">权限矩阵配置 (Global Policy)</h2>
-                     <div className="flex gap-1 bg-gray-900 p-1 rounded-lg overflow-x-auto max-w-[50vw] custom-scrollbar">
-                         {[0,1,2,3,4,5,6,7,8,9].map(lvl => (
-                             <button 
-                                key={lvl} 
-                                onClick={() => setActiveMatrixRole(lvl as RoleLevel)}
-                                className={`px-3 py-1.5 rounded-md text-xs font-bold transition-all ${activeMatrixRole === lvl ? 'bg-blue-600 text-white shadow' : 'text-gray-400 hover:bg-gray-700'}`}
-                             >
-                                 Lv.{lvl}
-                             </button>
-                         ))}
-                     </div>
-                 </div>
-
-                 {matrixConfig && (
-                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 animate-fade-in">
-                         {/* Card 1: Log Permissions */}
-                         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                             <h3 className="font-bold text-white mb-3">日志权限 (Log Level)</h3>
-                             <div className="space-y-2">
-                                 {[
-                                     { val: 'A', label: 'A级: 查看所有 + 任意撤销 (最高)' },
-                                     { val: 'B', label: 'B级: 查看所有 + 仅撤销低等级' },
-                                     { val: 'C', label: 'C级: 查看所有 + 仅撤销自己' },
-                                     { val: 'D', label: 'D级: 仅查看自己 + 仅撤销自己' },
-                                 ].map(opt => (
-                                     <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded ${matrixConfig.logs_level === opt.val ? 'bg-blue-900/30 border border-blue-800' : ''}`}>
-                                         <input 
-                                            type="radio" 
-                                            name="logs_level" 
-                                            checked={matrixConfig.logs_level === opt.val} 
-                                            onChange={() => updateMatrix({ logs_level: opt.val as any })}
-                                            className="accent-blue-500"
-                                         />
-                                         <span className={`text-sm ${matrixConfig.logs_level === opt.val ? 'text-blue-400 font-bold' : 'text-gray-400'}`}>{opt.label}</span>
-                                     </label>
-                                 ))}
-                             </div>
-                         </div>
-
-                         {/* Card 2: Functional Scope */}
-                         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700 space-y-6">
-                             <div>
-                                 <h3 className="font-bold text-white mb-3">公告权限</h3>
-                                 <div className="flex gap-4">
-                                     <label className="flex items-center gap-2 cursor-pointer">
-                                         <input type="radio" checked={matrixConfig.announcement_rule === 'PUBLISH'} onChange={() => updateMatrix({ announcement_rule: 'PUBLISH' })} className="accent-blue-500"/>
-                                         <span className="text-sm text-gray-300">发布 & 接收</span>
-                                     </label>
-                                     <label className="flex items-center gap-2 cursor-pointer">
-                                         <input type="radio" checked={matrixConfig.announcement_rule === 'VIEW'} onChange={() => updateMatrix({ announcement_rule: 'VIEW' })} className="accent-blue-500"/>
-                                         <span className="text-sm text-gray-300">仅接收</span>
-                                     </label>
-                                 </div>
-                             </div>
-                             <div>
-                                 <h3 className="font-bold text-white mb-3">门店范围策略</h3>
-                                 <div className="flex gap-4">
-                                     <label className="flex items-center gap-2 cursor-pointer">
-                                         <input type="radio" checked={matrixConfig.store_scope === 'GLOBAL'} onChange={() => updateMatrix({ store_scope: 'GLOBAL' })} className="accent-blue-500"/>
-                                         <span className="text-sm text-gray-300">全局 (Global)</span>
-                                     </label>
-                                     <label className="flex items-center gap-2 cursor-pointer">
-                                         <input type="radio" checked={matrixConfig.store_scope === 'LIMITED'} onChange={() => updateMatrix({ store_scope: 'LIMITED' })} className="accent-blue-500"/>
-                                         <span className="text-sm text-gray-300">受限 (User Specified)</span>
-                                     </label>
-                                 </div>
-                             </div>
-                         </div>
-
-                         {/* Card 3: Feature Flags */}
-                         <div className="bg-gray-900/50 p-4 rounded-lg border border-gray-700">
-                             <h3 className="font-bold text-white mb-3">功能开关</h3>
-                             <div className="grid grid-cols-1 gap-3">
-                                 <label className="flex items-center gap-2 cursor-pointer">
-                                     <input type="checkbox" checked={matrixConfig.show_excel} onChange={e => updateMatrix({ show_excel: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
-                                     <span className="text-sm text-gray-300">显示 Excel 导出</span>
-                                 </label>
-                                 <label className="flex items-center gap-2 cursor-pointer">
-                                     <input type="checkbox" checked={matrixConfig.view_self_in_list} onChange={e => updateMatrix({ view_self_in_list: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
-                                     <span className="text-sm text-gray-300">列表显示自己 (Show Self)</span>
-                                 </label>
-                                 <label className="flex items-center gap-2 cursor-pointer">
-                                     <input type="checkbox" checked={matrixConfig.view_peers} onChange={e => updateMatrix({ view_peers: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
-                                     <span className="text-sm text-gray-300">可见同级 (Visible Peers)</span>
-                                 </label>
-                                 <div className="h-px bg-gray-700 my-1"></div>
-                                 <label className="flex items-center gap-2 cursor-pointer">
-                                     <input type="checkbox" checked={matrixConfig.hide_perm_page} onChange={e => updateMatrix({ hide_perm_page: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
-                                     <span className="text-sm text-gray-300">隐藏权限页</span>
-                                 </label>
-                                 <label className="flex items-center gap-2 cursor-pointer">
-                                     <input type="checkbox" checked={matrixConfig.hide_audit_hall} onChange={e => updateMatrix({ hide_audit_hall: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
-                                     <span className="text-sm text-gray-300">隐藏审计大厅</span>
-                                 </label>
-                                 <label className="flex items-center gap-2 cursor-pointer">
-                                     <input type="checkbox" checked={matrixConfig.hide_store_management} onChange={e => updateMatrix({ hide_store_management: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
-                                     <span className="text-sm text-gray-300">隐藏门店管理 (增删改)</span>
-                                 </label>
-                             </div>
-                         </div>
-                     </div>
-                 )}
-             </div>
-
-             {/* 2. USER MANAGEMENT SECTION */}
+             {/* 1. USER MANAGEMENT SECTION (PERMISSION MATRIX IS NOW INSIDE MODAL) */}
              <div className="bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700 p-6 shadow-sm">
                  <div className="flex justify-between items-center mb-6">
                      <h2 className="text-xl font-bold dark:text-white">用户管理</h2>
@@ -433,22 +258,22 @@ const PermissionsSettings = () => {
                              <tr>
                                  <th className="p-4">用户</th>
                                  <th className="p-4">等级</th>
-                                 <th className="p-4">Matrix Log</th>
+                                 <th className="p-4">权限日志</th>
                                  <th className="p-4">门店范围</th>
                                  <th className="p-4 text-right">操作</th>
                              </tr>
                          </thead>
                          <tbody className="divide-y dark:divide-gray-700">
                              {subordinates.map(u => {
-                                 const p = getPermission(u.role_level);
+                                 // Permissions are now on the user object itself
                                  return (
                                      <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                          <td className="p-4"><UsernameBadge name={u.username} roleLevel={u.role_level} /></td>
                                          <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
-                                         <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{p.logs_level}级</span></td>
-                                         <td className="p-4 text-sm text-gray-500 dark:text-gray-400">{p.store_scope === 'GLOBAL' ? '全局 (Global)' : `受限 (${u.allowed_store_ids.length})`}</td>
+                                         <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{u.permissions?.logs_level || 'D'}级</span></td>
+                                         <td className="p-4 text-sm text-gray-500 dark:text-gray-400">{u.permissions?.store_scope === 'GLOBAL' ? '全局 (Global)' : `受限 (${u.allowed_store_ids.length})`}</td>
                                          <td className="p-4 text-right space-x-2">
-                                             <button onClick={() => handleEditUser(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
+                                             <button onClick={() => handleEditUser(u)} className="text-blue-600 font-bold hover:underline">配置权限</button>
                                              <button onClick={() => handleDeleteUser(u)} className="text-red-600 font-bold hover:underline">删除</button>
                                          </td>
                                      </tr>
@@ -459,40 +284,113 @@ const PermissionsSettings = () => {
                  </div>
              </div>
 
-             {/* USER MODAL */}
+             {/* USER MODAL WITH EMBEDDED MATRIX */}
              {isUserModalOpen && (
                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                     <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-lg shadow-2xl flex flex-col">
-                         <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center">
-                             <h2 className="text-xl font-bold dark:text-white">{editingUser ? '编辑用户' : '新增用户'}</h2>
+                     <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
+                         <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                             <h2 className="text-xl font-bold dark:text-white">{editingUser ? `编辑用户: ${editingUser.username}` : '新增用户'}</h2>
                              <button onClick={() => setIsUserModalOpen(false)}><Icons.Minus size={24} className="dark:text-white"/></button>
                          </div>
-                         <div className="p-6 space-y-4">
-                             <div><label className="block text-sm font-bold mb-1 dark:text-gray-300">用户名</label><input value={userFormData.username} onChange={e => setUserFormData({...userFormData, username: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
-                             <div><label className="block text-sm font-bold mb-1 dark:text-gray-300">密码</label><input value={userFormData.password} onChange={e => setUserFormData({...userFormData, password: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
-                             <div>
-                                 <label className="block text-sm font-bold mb-1 dark:text-gray-300">管理权限等级 (0-9)</label>
-                                 <input 
-                                     type="number" 
-                                     min={currentUser?.role_level} 
-                                     max="9" 
-                                     value={userFormData.role_level} 
-                                     onChange={e => setUserFormData({...userFormData, role_level: Number(e.target.value) as RoleLevel})} 
-                                     className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"
-                                 />
-                                 <p className="text-xs text-red-400 mt-1">
-                                     * 只能设置为 &gt;= {currentUser?.role_level} (您的等级)<br/>
-                                     {editingUser && `* 编辑时只能调低等级 (数字变大，当前: ${editingUser.role_level})`}
-                                 </p>
-                             </div>
+                         
+                         <div className="p-6 overflow-y-auto custom-scrollbar space-y-8">
                              
-                             {/* Limited Store Selection */}
-                             {getPermission(userFormData.role_level as RoleLevel).store_scope === 'LIMITED' && (
-                                 <div className="border rounded dark:border-gray-600 p-3">
+                             {/* BASIC INFO */}
+                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                 <div><label className="block text-sm font-bold mb-1 dark:text-gray-300">用户名</label><input value={userFormData.username} onChange={e => setUserFormData({...userFormData, username: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
+                                 <div><label className="block text-sm font-bold mb-1 dark:text-gray-300">密码</label><input value={userFormData.password} onChange={e => setUserFormData({...userFormData, password: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
+                                 <div>
+                                     <label className="block text-sm font-bold mb-1 dark:text-gray-300">等级 (0-9)</label>
+                                     <input 
+                                         type="number" 
+                                         min={currentUser?.role_level} 
+                                         max="9" 
+                                         value={userFormData.role_level} 
+                                         onChange={e => setUserFormData({...userFormData, role_level: Number(e.target.value) as RoleLevel})} 
+                                         className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"
+                                     />
+                                     <p className="text-xs text-red-400 mt-1">
+                                         * 只能设置为 &gt;= {currentUser?.role_level}<br/>
+                                         {editingUser && `* 只能调低等级 (数字变大)`}
+                                     </p>
+                                 </div>
+                             </div>
+
+                             <hr className="dark:border-gray-700"/>
+
+                             {/* PERMISSION MATRIX (Per User) */}
+                             <div>
+                                 <h3 className="text-lg font-bold dark:text-white mb-4 flex items-center gap-2"><Icons.Sparkles size={18}/> 权限矩阵配置</h3>
+                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                                     
+                                     {/* Card 1: Logs */}
+                                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
+                                         <h4 className="font-bold mb-3 dark:text-white">日志权限</h4>
+                                         <div className="space-y-2">
+                                             {[
+                                                 { val: 'A', label: 'A级: 查看所有 + 任意撤销 (最高)' },
+                                                 { val: 'B', label: 'B级: 查看所有 + 仅撤销低等级' },
+                                                 { val: 'C', label: 'C级: 查看所有 + 仅撤销自己' },
+                                                 { val: 'D', label: 'D级: 仅查看自己 + 仅撤销自己' },
+                                             ].map(opt => (
+                                                 <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded ${userFormData.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30' : ''}`}>
+                                                     <input 
+                                                        type="radio" 
+                                                        name="logs_level" 
+                                                        checked={userFormData.logs_level === opt.val} 
+                                                        onChange={() => setUserFormData({...userFormData, logs_level: opt.val as any})}
+                                                        className="accent-blue-500"
+                                                     />
+                                                     <span className="text-sm dark:text-gray-300">{opt.label}</span>
+                                                 </label>
+                                             ))}
+                                         </div>
+                                     </div>
+
+                                     {/* Card 2: Scope */}
+                                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
+                                         <h4 className="font-bold mb-3 dark:text-white">功能范围</h4>
+                                         <div className="space-y-4">
+                                             <div>
+                                                 <label className="text-xs font-bold text-gray-500 block mb-1">公告</label>
+                                                 <div className="flex gap-2">
+                                                     <label className="flex items-center gap-1"><input type="radio" checked={userFormData.announcement_rule === 'PUBLISH'} onChange={() => setUserFormData({...userFormData, announcement_rule: 'PUBLISH'})}/> 发布&接收</label>
+                                                     <label className="flex items-center gap-1"><input type="radio" checked={userFormData.announcement_rule === 'VIEW'} onChange={() => setUserFormData({...userFormData, announcement_rule: 'VIEW'})}/> 仅接收</label>
+                                                 </div>
+                                             </div>
+                                             <div>
+                                                 <label className="text-xs font-bold text-gray-500 block mb-1">门店</label>
+                                                 <div className="flex gap-2">
+                                                     <label className="flex items-center gap-1"><input type="radio" checked={userFormData.store_scope === 'GLOBAL'} onChange={() => setUserFormData({...userFormData, store_scope: 'GLOBAL'})}/> 全局</label>
+                                                     <label className="flex items-center gap-1"><input type="radio" checked={userFormData.store_scope === 'LIMITED'} onChange={() => setUserFormData({...userFormData, store_scope: 'LIMITED'})}/> 受限</label>
+                                                 </div>
+                                             </div>
+                                         </div>
+                                     </div>
+
+                                     {/* Card 3: Flags */}
+                                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
+                                         <h4 className="font-bold mb-3 dark:text-white">功能开关</h4>
+                                         <div className="grid grid-cols-1 gap-2">
+                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.show_excel} onChange={e => setUserFormData({...userFormData, show_excel: e.target.checked})}/> <span className="text-sm">Excel 导出</span></label>
+                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.view_self_in_list} onChange={e => setUserFormData({...userFormData, view_self_in_list: e.target.checked})}/> <span className="text-sm">列表显示自己</span></label>
+                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.view_peers} onChange={e => setUserFormData({...userFormData, view_peers: e.target.checked})}/> <span className="text-sm">可见同级</span></label>
+                                             <div className="h-px bg-gray-200 dark:bg-gray-600 my-1"></div>
+                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.hide_perm_page} onChange={e => setUserFormData({...userFormData, hide_perm_page: e.target.checked})}/> <span className="text-sm text-red-500">隐藏权限页</span></label>
+                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.hide_audit_hall} onChange={e => setUserFormData({...userFormData, hide_audit_hall: e.target.checked})}/> <span className="text-sm text-red-500">隐藏审计大厅</span></label>
+                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.hide_store_management} onChange={e => setUserFormData({...userFormData, hide_store_management: e.target.checked})}/> <span className="text-sm text-red-500">隐藏门店管理</span></label>
+                                         </div>
+                                     </div>
+                                 </div>
+                             </div>
+
+                             {/* LIMITED STORE SELECTION */}
+                             {userFormData.store_scope === 'LIMITED' && (
+                                 <div className="border rounded dark:border-gray-600 p-4 bg-gray-50 dark:bg-gray-800">
                                      <h3 className="font-bold text-sm mb-2 dark:text-gray-300">门店分配 (受限模式)</h3>
-                                     <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto">
+                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-h-40 overflow-y-auto">
                                          {stores.map(s => (
-                                             <label key={s.id} className="flex items-center gap-2 text-xs dark:text-gray-300">
+                                             <label key={s.id} className="flex items-center gap-2 text-xs dark:text-gray-300 p-2 border rounded bg-white dark:bg-gray-700">
                                                  <input 
                                                     type="checkbox" 
                                                     checked={userFormData.allowed_store_ids?.includes(s.id)}
@@ -508,10 +406,11 @@ const PermissionsSettings = () => {
                                      </div>
                                  </div>
                              )}
+
                          </div>
                          <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-3 rounded-b-xl">
                              <button onClick={() => setIsUserModalOpen(false)} className="px-4 py-2 text-gray-500 font-bold">取消</button>
-                             <button onClick={handleSaveUser} className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700">保存</button>
+                             <button onClick={handleSaveUser} className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-lg">保存配置</button>
                          </div>
                      </div>
                  </div>
@@ -521,7 +420,6 @@ const PermissionsSettings = () => {
 };
 
 const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
-    // ... (Existing FaceSetup implementation kept same)
     const videoRef = useRef<HTMLVideoElement>(null);
     const [status, setStatus] = useState('初始化相机...');
     useEffect(() => {
@@ -554,7 +452,6 @@ const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
 };
 
 const AccountSettings = () => {
-    // ... (Existing AccountSettings implementation kept same but ensuring imports work)
     const user = authService.getCurrentUser();
     const [form, setForm] = useState({ username: '', password: '' });
     const [showPass, setShowPass] = useState(false);
@@ -569,7 +466,9 @@ const AccountSettings = () => {
     const handleSave = async () => {
         if (!user) return;
         await dataService.updateUser(user.id, form);
-        sessionStorage.setItem('sw_session_user', JSON.stringify({ ...user, ...form }));
+        // Reload session data to reflect changes
+        const updatedUser = { ...user, ...form };
+        authService.setSession(updatedUser);
         alert("保存成功"); window.location.reload();
     };
     return (
