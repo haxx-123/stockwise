@@ -1,3 +1,5 @@
+
+
 import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -32,11 +34,14 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
         if (onThemeChange) onThemeChange(theme);
     };
     
-    // UPDATED SQL SCRIPT FOR PER-USER PERMISSIONS
+    // UPDATED SQL SCRIPT FOR USER-CENTRIC PERMISSIONS
     const sqlScript = `
--- STOCKWISE V4.0 PER-USER MATRIX UPDATE
+-- STOCKWISE V3.2.0 USER-CENTRIC PERMISSIONS
 -- SQL是/否较上一次发生更改: 是
 -- SQL是/否必须包含重置数据库: 否
+
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
 DO $$ 
 BEGIN 
@@ -71,21 +76,26 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='only_view_config') THEN
         ALTER TABLE users ADD COLUMN only_view_config boolean DEFAULT false;
     END IF;
+    
+    -- Drop legacy 'permissions' column from users if exists
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='permissions') THEN
+         ALTER TABLE users DROP COLUMN permissions;
+    END IF;
 
-    -- 2. Clean up legacy tables/columns if desired (Optional, keeping safe for now)
-    -- DROP TABLE IF EXISTS role_permissions; 
-
-    -- 3. Update Live View (Now just a pass-through for convenience)
+    -- 2. Update Live View to simply select from users (Legacy wrapper)
     DROP VIEW IF EXISTS live_users_v;
     CREATE VIEW live_users_v AS
-    SELECT * FROM users;
+    SELECT 
+        u.*
+    FROM users u;
 
-    -- 4. Enable Realtime on Users Table
-    -- Note: You must enable Replica Identity Full or Default to get old/new values, 
-    -- usually Default is fine for Updates if PK exists.
+    -- 3. Realtime on USERS table
     IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname = 'supabase_realtime' AND tablename = 'users') THEN
         ALTER PUBLICATION supabase_realtime ADD TABLE users;
     END IF;
+
+    -- 4. Helper Logic for Stores (Ensure table exists)
+    CREATE TABLE IF NOT EXISTS stores (id text PRIMARY KEY, name text, location text, is_archived boolean default false);
 
 END $$;
 `;
@@ -147,8 +157,10 @@ END $$;
 
 const PermissionsSettings = () => {
     const currentUser = authService.getCurrentUser();
-    const { getPermission } = usePermissionContext(); 
+    const { currentUserPermissions } = usePermissionContext(); 
+    const client = getSupabaseClient();
 
+    // -- State for User List --
     const [subordinates, setSubordinates] = useState<User[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
     const [isUserModalOpen, setIsUserModalOpen] = useState(false);
@@ -164,7 +176,8 @@ const PermissionsSettings = () => {
         if (!currentUser) return;
         const [users, allStores] = await Promise.all([dataService.getUsers(), dataService.getStores()]);
         
-        const myPerms = getPermission(currentUser.role_level);
+        // Use live permissions from context
+        const myPerms = currentUserPermissions;
         let subs: User[] = [];
         
         if (myPerms.view_peers) {
@@ -177,6 +190,7 @@ const PermissionsSettings = () => {
         if (!myPerms.view_self_in_list) {
             subs = subs.filter(u => u.id !== currentUser.id);
         } else {
+            // Ensure self is in list if not already
             if (!subs.find(u => u.id === currentUser.id)) {
                 const me = users.find(u => u.id === currentUser.id);
                 if (me) subs.unshift(me);
@@ -189,6 +203,7 @@ const PermissionsSettings = () => {
     // -- User Modal Handlers --
     const handleEditUser = (user: User | null) => {
         if (user) {
+            // Logic: Can modify Self. Can Create Peer. Cannot Modify Peer (unless self).
             if (currentUser && user.role_level === currentUser.role_level && user.id !== currentUser.id) {
                 alert("无权修改同级用户 (仅可查看/删除/新建)");
                 return;
@@ -198,17 +213,41 @@ const PermissionsSettings = () => {
                  return;
             }
             setEditingUser(user);
-            // Deep copy user data for editing
-            setUserFormData(JSON.parse(JSON.stringify(user)));
+            // Clone user data into form, ensuring permissions are flattened or present
+            // The User type now has flat fields, so direct copy works mostly
+            // We use the flat fields for the form state
+            setUserFormData({
+                ...user,
+                // Ensure defaults if null
+                logs_level: user.logs_level || 'D',
+                announcement_rule: user.announcement_rule || 'VIEW',
+                store_scope: user.store_scope || 'LIMITED',
+                show_excel: user.show_excel ?? false,
+                view_peers: user.view_peers ?? false,
+                view_self_in_list: user.view_self_in_list ?? true,
+                hide_perm_page: user.hide_perm_page ?? true,
+                hide_audit_hall: user.hide_audit_hall ?? true,
+                hide_store_management: user.hide_store_management ?? true,
+                only_view_config: user.only_view_config ?? false
+            });
         } else {
-            // Create New: Default Permissions
-            const myPerms = getPermission(currentUser?.role_level || 0);
+            // Create New
             setEditingUser(null);
             setUserFormData({
                 username: '', password: '123', 
-                role_level: (myPerms.view_peers ? currentUser?.role_level : (currentUser?.role_level || 0) + 1) as RoleLevel,
+                role_level: (currentUserPermissions.view_peers ? currentUser?.role_level : (currentUser?.role_level || 0) + 1) as RoleLevel,
                 allowed_store_ids: [],
-                ...DEFAULT_PERMISSIONS // Spread defaults
+                // Defaults for new user
+                logs_level: 'D',
+                announcement_rule: 'VIEW',
+                store_scope: 'LIMITED',
+                show_excel: false,
+                view_peers: false,
+                view_self_in_list: true,
+                hide_perm_page: true,
+                hide_audit_hall: true,
+                hide_store_management: true,
+                only_view_config: false
             });
         }
         setIsUserModalOpen(true);
@@ -224,12 +263,14 @@ const PermissionsSettings = () => {
         if (inputLevel < myLevel) return alert("不能将用户等级设置高于您自己的等级");
 
         if (editingUser) {
+             // Editing Existing
+             // Cannot Promote (decrease level number below original)
              if (inputLevel < editingUser.role_level) return alert("权限等级只能往低修改 (数字变大，不可往高修改！");
         } 
 
         try {
             if (editingUser) await dataService.updateUser(editingUser.id, userFormData);
-            else await dataService.createUser(userFormData);
+            else await dataService.createUser(userFormData as any);
             setIsUserModalOpen(false);
             loadUsers();
         } catch(e: any) { alert(e.message); }
@@ -240,10 +281,16 @@ const PermissionsSettings = () => {
         if(confirm("确定删除该用户？(软删除)")) { await dataService.deleteUser(u.id); loadUsers(); }
     };
 
+    // Helper to update form data
+    const updateForm = (updates: Partial<User>) => {
+        setUserFormData(prev => ({ ...prev, ...updates }));
+    };
+
+    // -- Render --
     return (
         <div className="p-4 md:p-8 max-w-7xl mx-auto dark:text-gray-100 flex flex-col gap-8">
              
-             {/* 1. USER MANAGEMENT SECTION (PERMISSION MATRIX IS NOW INSIDE MODAL) */}
+             {/* 1. USER MANAGEMENT SECTION (Main View) */}
              <div className="bg-white dark:bg-gray-800 rounded-xl border dark:border-gray-700 p-6 shadow-sm">
                  <div className="flex justify-between items-center mb-6">
                      <h2 className="text-xl font-bold dark:text-white">用户管理</h2>
@@ -258,22 +305,22 @@ const PermissionsSettings = () => {
                              <tr>
                                  <th className="p-4">用户</th>
                                  <th className="p-4">等级</th>
-                                 <th className="p-4">权限日志</th>
+                                 <th className="p-4">日志权限</th>
                                  <th className="p-4">门店范围</th>
                                  <th className="p-4 text-right">操作</th>
                              </tr>
                          </thead>
                          <tbody className="divide-y dark:divide-gray-700">
                              {subordinates.map(u => {
-                                 // Permissions are now on the user object itself
+                                 const p = u.permissions; // Now intrinsic
                                  return (
                                      <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
                                          <td className="p-4"><UsernameBadge name={u.username} roleLevel={u.role_level} /></td>
                                          <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
-                                         <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{u.permissions?.logs_level || 'D'}级</span></td>
-                                         <td className="p-4 text-sm text-gray-500 dark:text-gray-400">{u.permissions?.store_scope === 'GLOBAL' ? '全局 (Global)' : `受限 (${u.allowed_store_ids.length})`}</td>
+                                         <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{p.logs_level}级</span></td>
+                                         <td className="p-4 text-sm text-gray-500 dark:text-gray-400">{p.store_scope === 'GLOBAL' ? '全局 (Global)' : `受限 (${u.allowed_store_ids.length})`}</td>
                                          <td className="p-4 text-right space-x-2">
-                                             <button onClick={() => handleEditUser(u)} className="text-blue-600 font-bold hover:underline">配置权限</button>
+                                             <button onClick={() => handleEditUser(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
                                              <button onClick={() => handleDeleteUser(u)} className="text-red-600 font-bold hover:underline">删除</button>
                                          </td>
                                      </tr>
@@ -288,44 +335,49 @@ const PermissionsSettings = () => {
              {isUserModalOpen && (
                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
                      <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh]">
-                         <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
-                             <h2 className="text-xl font-bold dark:text-white">{editingUser ? `编辑用户: ${editingUser.username}` : '新增用户'}</h2>
+                         <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center shrink-0">
+                             <h2 className="text-xl font-bold dark:text-white">{editingUser ? '编辑用户 & 权限配置' : '新增用户 & 权限配置'}</h2>
                              <button onClick={() => setIsUserModalOpen(false)}><Icons.Minus size={24} className="dark:text-white"/></button>
                          </div>
                          
-                         <div className="p-6 overflow-y-auto custom-scrollbar space-y-8">
-                             
-                             {/* BASIC INFO */}
-                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                 <div><label className="block text-sm font-bold mb-1 dark:text-gray-300">用户名</label><input value={userFormData.username} onChange={e => setUserFormData({...userFormData, username: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
-                                 <div><label className="block text-sm font-bold mb-1 dark:text-gray-300">密码</label><input value={userFormData.password} onChange={e => setUserFormData({...userFormData, password: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
-                                 <div>
-                                     <label className="block text-sm font-bold mb-1 dark:text-gray-300">等级 (0-9)</label>
-                                     <input 
-                                         type="number" 
-                                         min={currentUser?.role_level} 
-                                         max="9" 
-                                         value={userFormData.role_level} 
-                                         onChange={e => setUserFormData({...userFormData, role_level: Number(e.target.value) as RoleLevel})} 
-                                         className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"
-                                     />
-                                     <p className="text-xs text-red-400 mt-1">
-                                         * 只能设置为 &gt;= {currentUser?.role_level}<br/>
-                                         {editingUser && `* 只能调低等级 (数字变大)`}
-                                     </p>
+                         <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
+                             {/* Basic Info */}
+                             <div className="space-y-4">
+                                 <h3 className="font-bold text-lg dark:text-white border-b pb-2 dark:border-gray-700">基本信息</h3>
+                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                     <div>
+                                        <label className="block text-sm font-bold mb-1 dark:text-gray-300">用户名</label>
+                                        <input value={userFormData.username} onChange={e => updateForm({username: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/>
+                                     </div>
+                                     <div>
+                                        <label className="block text-sm font-bold mb-1 dark:text-gray-300">密码</label>
+                                        <input value={userFormData.password} onChange={e => updateForm({password: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/>
+                                     </div>
+                                     <div>
+                                         <label className="block text-sm font-bold mb-1 dark:text-gray-300">管理等级 (0-9)</label>
+                                         <input 
+                                             type="number" 
+                                             min={currentUser?.role_level} 
+                                             max="9" 
+                                             value={userFormData.role_level} 
+                                             onChange={e => updateForm({role_level: Number(e.target.value) as RoleLevel})} 
+                                             className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"
+                                         />
+                                         <p className="text-xs text-red-400 mt-1">
+                                             * &gt;= {currentUser?.role_level} (您的等级)
+                                         </p>
+                                     </div>
                                  </div>
                              </div>
 
-                             <hr className="dark:border-gray-700"/>
-
-                             {/* PERMISSION MATRIX (Per User) */}
-                             <div>
-                                 <h3 className="text-lg font-bold dark:text-white mb-4 flex items-center gap-2"><Icons.Sparkles size={18}/> 权限矩阵配置</h3>
+                             {/* Permission Matrix Embedded */}
+                             <div className="space-y-4">
+                                 <h3 className="font-bold text-lg dark:text-white border-b pb-2 dark:border-gray-700">权限矩阵 (单用户配置)</h3>
+                                 
                                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                     
-                                     {/* Card 1: Logs */}
+                                     {/* Card 1: Log Permissions */}
                                      <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
-                                         <h4 className="font-bold mb-3 dark:text-white">日志权限</h4>
+                                         <h3 className="font-bold dark:text-white mb-3">日志权限 (Log Level)</h3>
                                          <div className="space-y-2">
                                              {[
                                                  { val: 'A', label: 'A级: 查看所有 + 任意撤销 (最高)' },
@@ -333,84 +385,109 @@ const PermissionsSettings = () => {
                                                  { val: 'C', label: 'C级: 查看所有 + 仅撤销自己' },
                                                  { val: 'D', label: 'D级: 仅查看自己 + 仅撤销自己' },
                                              ].map(opt => (
-                                                 <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded ${userFormData.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30' : ''}`}>
+                                                 <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded ${userFormData.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800' : ''}`}>
                                                      <input 
                                                         type="radio" 
                                                         name="logs_level" 
                                                         checked={userFormData.logs_level === opt.val} 
-                                                        onChange={() => setUserFormData({...userFormData, logs_level: opt.val as any})}
+                                                        onChange={() => updateForm({ logs_level: opt.val as any })}
                                                         className="accent-blue-500"
                                                      />
-                                                     <span className="text-sm dark:text-gray-300">{opt.label}</span>
+                                                     <span className={`text-sm ${userFormData.logs_level === opt.val ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400'}`}>{opt.label}</span>
                                                  </label>
                                              ))}
                                          </div>
                                      </div>
 
-                                     {/* Card 2: Scope */}
-                                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
-                                         <h4 className="font-bold mb-3 dark:text-white">功能范围</h4>
-                                         <div className="space-y-4">
-                                             <div>
-                                                 <label className="text-xs font-bold text-gray-500 block mb-1">公告</label>
-                                                 <div className="flex gap-2">
-                                                     <label className="flex items-center gap-1"><input type="radio" checked={userFormData.announcement_rule === 'PUBLISH'} onChange={() => setUserFormData({...userFormData, announcement_rule: 'PUBLISH'})}/> 发布&接收</label>
-                                                     <label className="flex items-center gap-1"><input type="radio" checked={userFormData.announcement_rule === 'VIEW'} onChange={() => setUserFormData({...userFormData, announcement_rule: 'VIEW'})}/> 仅接收</label>
-                                                 </div>
+                                     {/* Card 2: Functional Scope */}
+                                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 space-y-6">
+                                         <div>
+                                             <h3 className="font-bold dark:text-white mb-3">公告权限</h3>
+                                             <div className="flex gap-4">
+                                                 <label className="flex items-center gap-2 cursor-pointer">
+                                                     <input type="radio" checked={userFormData.announcement_rule === 'PUBLISH'} onChange={() => updateForm({ announcement_rule: 'PUBLISH' })} className="accent-blue-500"/>
+                                                     <span className="text-sm dark:text-gray-300">发布 & 接收</span>
+                                                 </label>
+                                                 <label className="flex items-center gap-2 cursor-pointer">
+                                                     <input type="radio" checked={userFormData.announcement_rule === 'VIEW'} onChange={() => updateForm({ announcement_rule: 'VIEW' })} className="accent-blue-500"/>
+                                                     <span className="text-sm dark:text-gray-300">仅接收</span>
+                                                 </label>
                                              </div>
-                                             <div>
-                                                 <label className="text-xs font-bold text-gray-500 block mb-1">门店</label>
-                                                 <div className="flex gap-2">
-                                                     <label className="flex items-center gap-1"><input type="radio" checked={userFormData.store_scope === 'GLOBAL'} onChange={() => setUserFormData({...userFormData, store_scope: 'GLOBAL'})}/> 全局</label>
-                                                     <label className="flex items-center gap-1"><input type="radio" checked={userFormData.store_scope === 'LIMITED'} onChange={() => setUserFormData({...userFormData, store_scope: 'LIMITED'})}/> 受限</label>
-                                                 </div>
+                                         </div>
+                                         <div>
+                                             <h3 className="font-bold dark:text-white mb-3">门店范围策略</h3>
+                                             <div className="flex gap-4 mb-2">
+                                                 <label className="flex items-center gap-2 cursor-pointer">
+                                                     <input type="radio" checked={userFormData.store_scope === 'GLOBAL'} onChange={() => updateForm({ store_scope: 'GLOBAL' })} className="accent-blue-500"/>
+                                                     <span className="text-sm dark:text-gray-300">全局 (Global)</span>
+                                                 </label>
+                                                 <label className="flex items-center gap-2 cursor-pointer">
+                                                     <input type="radio" checked={userFormData.store_scope === 'LIMITED'} onChange={() => updateForm({ store_scope: 'LIMITED' })} className="accent-blue-500"/>
+                                                     <span className="text-sm dark:text-gray-300">受限 (User Specified)</span>
+                                                 </label>
                                              </div>
+                                             {/* Store Selector shows up when LIMITED is selected */}
+                                             {userFormData.store_scope === 'LIMITED' && (
+                                                 <div className="border rounded dark:border-gray-600 p-3 bg-white dark:bg-gray-700 animate-fade-in">
+                                                     <h3 className="font-bold text-xs mb-2 dark:text-gray-300">选择可见门店</h3>
+                                                     <div className="grid grid-cols-1 gap-2 max-h-32 overflow-y-auto custom-scrollbar">
+                                                         {stores.map(s => (
+                                                             <label key={s.id} className="flex items-center gap-2 text-xs dark:text-gray-300">
+                                                                 <input 
+                                                                    type="checkbox" 
+                                                                    checked={userFormData.allowed_store_ids?.includes(s.id)}
+                                                                    onChange={e => {
+                                                                        const set = new Set<string>(userFormData.allowed_store_ids || []);
+                                                                        if(e.target.checked) set.add(s.id); else set.delete(s.id);
+                                                                        updateForm({allowed_store_ids: Array.from(set)});
+                                                                    }}
+                                                                 />
+                                                                 {s.name}
+                                                             </label>
+                                                         ))}
+                                                     </div>
+                                                 </div>
+                                             )}
                                          </div>
                                      </div>
 
-                                     {/* Card 3: Flags */}
+                                     {/* Card 3: Feature Flags */}
                                      <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
-                                         <h4 className="font-bold mb-3 dark:text-white">功能开关</h4>
-                                         <div className="grid grid-cols-1 gap-2">
-                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.show_excel} onChange={e => setUserFormData({...userFormData, show_excel: e.target.checked})}/> <span className="text-sm">Excel 导出</span></label>
-                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.view_self_in_list} onChange={e => setUserFormData({...userFormData, view_self_in_list: e.target.checked})}/> <span className="text-sm">列表显示自己</span></label>
-                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.view_peers} onChange={e => setUserFormData({...userFormData, view_peers: e.target.checked})}/> <span className="text-sm">可见同级</span></label>
-                                             <div className="h-px bg-gray-200 dark:bg-gray-600 my-1"></div>
-                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.hide_perm_page} onChange={e => setUserFormData({...userFormData, hide_perm_page: e.target.checked})}/> <span className="text-sm text-red-500">隐藏权限页</span></label>
-                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.hide_audit_hall} onChange={e => setUserFormData({...userFormData, hide_audit_hall: e.target.checked})}/> <span className="text-sm text-red-500">隐藏审计大厅</span></label>
-                                             <label className="flex items-center gap-2"><input type="checkbox" checked={userFormData.hide_store_management} onChange={e => setUserFormData({...userFormData, hide_store_management: e.target.checked})}/> <span className="text-sm text-red-500">隐藏门店管理</span></label>
+                                         <h3 className="font-bold dark:text-white mb-3">功能开关</h3>
+                                         <div className="grid grid-cols-1 gap-3">
+                                             <label className="flex items-center gap-2 cursor-pointer">
+                                                 <input type="checkbox" checked={userFormData.show_excel} onChange={e => updateForm({ show_excel: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
+                                                 <span className="text-sm dark:text-gray-300">显示 Excel 导出</span>
+                                             </label>
+                                             <label className="flex items-center gap-2 cursor-pointer">
+                                                 <input type="checkbox" checked={userFormData.view_self_in_list} onChange={e => updateForm({ view_self_in_list: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
+                                                 <span className="text-sm dark:text-gray-300">列表显示自己 (Show Self)</span>
+                                             </label>
+                                             <label className="flex items-center gap-2 cursor-pointer">
+                                                 <input type="checkbox" checked={userFormData.view_peers} onChange={e => updateForm({ view_peers: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
+                                                 <span className="text-sm dark:text-gray-300">可见同级 (Visible Peers)</span>
+                                             </label>
+                                             <div className="h-px bg-gray-200 dark:bg-gray-700 my-1"></div>
+                                             <label className="flex items-center gap-2 cursor-pointer">
+                                                 <input type="checkbox" checked={userFormData.hide_perm_page} onChange={e => updateForm({ hide_perm_page: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
+                                                 <span className="text-sm dark:text-gray-300">隐藏权限页</span>
+                                             </label>
+                                             <label className="flex items-center gap-2 cursor-pointer">
+                                                 <input type="checkbox" checked={userFormData.hide_audit_hall} onChange={e => updateForm({ hide_audit_hall: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
+                                                 <span className="text-sm dark:text-gray-300">隐藏审计大厅</span>
+                                             </label>
+                                             <label className="flex items-center gap-2 cursor-pointer">
+                                                 <input type="checkbox" checked={userFormData.hide_store_management} onChange={e => updateForm({ hide_store_management: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
+                                                 <span className="text-sm dark:text-gray-300">隐藏门店管理 (增删改)</span>
+                                             </label>
                                          </div>
                                      </div>
                                  </div>
                              </div>
-
-                             {/* LIMITED STORE SELECTION */}
-                             {userFormData.store_scope === 'LIMITED' && (
-                                 <div className="border rounded dark:border-gray-600 p-4 bg-gray-50 dark:bg-gray-800">
-                                     <h3 className="font-bold text-sm mb-2 dark:text-gray-300">门店分配 (受限模式)</h3>
-                                     <div className="grid grid-cols-2 md:grid-cols-4 gap-2 max-h-40 overflow-y-auto">
-                                         {stores.map(s => (
-                                             <label key={s.id} className="flex items-center gap-2 text-xs dark:text-gray-300 p-2 border rounded bg-white dark:bg-gray-700">
-                                                 <input 
-                                                    type="checkbox" 
-                                                    checked={userFormData.allowed_store_ids?.includes(s.id)}
-                                                    onChange={e => {
-                                                        const set = new Set(userFormData.allowed_store_ids);
-                                                        if(e.target.checked) set.add(s.id); else set.delete(s.id);
-                                                        setUserFormData({...userFormData, allowed_store_ids: Array.from(set)});
-                                                    }}
-                                                 />
-                                                 {s.name}
-                                             </label>
-                                         ))}
-                                     </div>
-                                 </div>
-                             )}
-
                          </div>
-                         <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-3 rounded-b-xl">
+                         <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-3 rounded-b-xl shrink-0">
                              <button onClick={() => setIsUserModalOpen(false)} className="px-4 py-2 text-gray-500 font-bold">取消</button>
-                             <button onClick={handleSaveUser} className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow-lg">保存配置</button>
+                             <button onClick={handleSaveUser} className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow">保存用户配置</button>
                          </div>
                      </div>
                  </div>
@@ -420,6 +497,7 @@ const PermissionsSettings = () => {
 };
 
 const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
+    // ... (Existing FaceSetup implementation kept same)
     const videoRef = useRef<HTMLVideoElement>(null);
     const [status, setStatus] = useState('初始化相机...');
     useEffect(() => {
@@ -452,6 +530,7 @@ const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
 };
 
 const AccountSettings = () => {
+    // ... (Existing AccountSettings implementation kept same but ensuring imports work)
     const user = authService.getCurrentUser();
     const [form, setForm] = useState({ username: '', password: '' });
     const [showPass, setShowPass] = useState(false);
@@ -466,9 +545,7 @@ const AccountSettings = () => {
     const handleSave = async () => {
         if (!user) return;
         await dataService.updateUser(user.id, form);
-        // Reload session data to reflect changes
-        const updatedUser = { ...user, ...form };
-        authService.setSession(updatedUser);
+        sessionStorage.setItem('sw_session_user', JSON.stringify({ ...user, ...form }));
         alert("保存成功"); window.location.reload();
     };
     return (
@@ -496,3 +573,4 @@ const AccountSettings = () => {
         </div>
     );
 };
+

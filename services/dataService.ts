@@ -1,4 +1,5 @@
 
+
 import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel, UserPermissions } from '../types';
 import { getSupabaseClient } from './supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from './authService';
@@ -16,21 +17,22 @@ class DataService {
       const client = this.getClient();
       if (!client) return;
       const user = authService.getCurrentUser();
+      // Insert into system_audit_logs treating it as a special operation
       await client.from('system_audit_logs').insert({
           table_name: 'CLIENT_ACTION',
           record_id: user?.id || 'ANON',
-          operation: 'CLIENT_ACTION',
+          operation: 'CLIENT_ACTION', // Custom op
           new_data: { action, details, operator: user?.username },
           timestamp: new Date().toISOString()
       });
   }
 
-  // --- Users (Architecture Refactor: Per-User Matrix) ---
+  // --- Users (Architecture Refactor: Direct User Table) ---
   async getUsers(includeArchived = false): Promise<User[]> {
       const client = this.getClient();
       if (!client) return [];
       
-      // Query the VIEW (which now mirrors the USERS table with new columns)
+      // Query the table directly (or the simple view live_users_v which selects from users)
       let query = client.from('live_users_v').select('*');
       
       if (!includeArchived) {
@@ -42,60 +44,73 @@ class DataService {
           return [];
       } 
       
-      // Map flat DB columns to User structure
-      return (data || []).map((row: any) => {
-          // Construct permissions object from flat columns
-          const perms: UserPermissions = {
-              role_level: row.role_level,
-              logs_level: row.logs_level || 'D',
-              announcement_rule: row.announcement_rule || 'VIEW',
-              store_scope: row.store_scope || 'LIMITED',
-              show_excel: row.show_excel ?? false,
-              view_peers: row.view_peers ?? false,
-              view_self_in_list: row.view_self_in_list ?? true,
-              hide_perm_page: row.hide_perm_page ?? true,
-              hide_audit_hall: row.hide_audit_hall ?? true,
-              hide_store_management: row.hide_store_management ?? true,
-              only_view_config: row.only_view_config ?? false
-          };
+      // Map flat DB columns to User structure with permissions object
+      return (data || []).map((row: any) => ({
+          id: row.id,
+          username: row.username,
+          password: row.password,
+          role_level: row.role_level,
+          allowed_store_ids: row.allowed_store_ids,
+          is_archived: row.is_archived,
+          face_descriptor: row.face_descriptor,
+          
+          // Flat fields on User object
+          logs_level: row.logs_level,
+          announcement_rule: row.announcement_rule,
+          store_scope: row.store_scope,
+          show_excel: row.show_excel,
+          view_peers: row.view_peers,
+          view_self_in_list: row.view_self_in_list,
+          hide_perm_page: row.hide_perm_page,
+          hide_audit_hall: row.hide_audit_hall,
+          hide_store_management: row.hide_store_management,
+          only_view_config: row.only_view_config,
 
-          return {
-              id: row.id,
-              username: row.username,
-              password: row.password,
+          // Construct permissions object for app compatibility
+          permissions: {
               role_level: row.role_level,
-              allowed_store_ids: row.allowed_store_ids || [],
-              is_archived: row.is_archived,
-              face_descriptor: row.face_descriptor,
-              
-              // Attach the computed permissions object for app logic
-              permissions: perms,
-
-              // Also keep raw fields attached for the Edit Modal
-              ...perms
-          };
-      });
+              logs_level: row.logs_level ?? DEFAULT_PERMISSIONS.logs_level,
+              announcement_rule: row.announcement_rule ?? DEFAULT_PERMISSIONS.announcement_rule,
+              store_scope: row.store_scope ?? DEFAULT_PERMISSIONS.store_scope,
+              show_excel: row.show_excel ?? DEFAULT_PERMISSIONS.show_excel,
+              view_peers: row.view_peers ?? DEFAULT_PERMISSIONS.view_peers,
+              view_self_in_list: row.view_self_in_list ?? DEFAULT_PERMISSIONS.view_self_in_list,
+              hide_perm_page: row.hide_perm_page ?? DEFAULT_PERMISSIONS.hide_perm_page,
+              hide_audit_hall: row.hide_audit_hall ?? DEFAULT_PERMISSIONS.hide_audit_hall,
+              hide_store_management: row.hide_store_management ?? DEFAULT_PERMISSIONS.hide_store_management,
+              only_view_config: row.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config
+          } as UserPermissions
+      }));
   }
 
-  async createUser(user: Partial<User>): Promise<void> {
+  async createUser(user: Omit<User, 'id'>): Promise<void> {
       const client = this.getClient();
       if (!client) return;
       
       await this.logClientAction('CREATE_USER', { target: user.username });
 
       // Flatten permissions for DB insertion
-      // We strip the nested 'permissions' object and rely on the top-level keys
       const { permissions, ...userData } = user as any;
-
-      // Note: userData contains the flat permission fields (logs_level, etc.) because
-      // the form updates the top-level user object.
-      
-      const { error } = await client.from('users').insert({ 
-          ...userData, 
+      const payload = {
+          ...userData,
           id: crypto.randomUUID(),
+          // Use values from permissions object if available, otherwise fallback to root props or defaults
+          logs_level: user.logs_level || permissions?.logs_level || DEFAULT_PERMISSIONS.logs_level,
+          announcement_rule: user.announcement_rule || permissions?.announcement_rule || DEFAULT_PERMISSIONS.announcement_rule,
+          store_scope: user.store_scope || permissions?.store_scope || DEFAULT_PERMISSIONS.store_scope,
+          show_excel: user.show_excel ?? permissions?.show_excel ?? DEFAULT_PERMISSIONS.show_excel,
+          view_peers: user.view_peers ?? permissions?.view_peers ?? DEFAULT_PERMISSIONS.view_peers,
+          view_self_in_list: user.view_self_in_list ?? permissions?.view_self_in_list ?? DEFAULT_PERMISSIONS.view_self_in_list,
+          hide_perm_page: user.hide_perm_page ?? permissions?.hide_perm_page ?? DEFAULT_PERMISSIONS.hide_perm_page,
+          hide_audit_hall: user.hide_audit_hall ?? permissions?.hide_audit_hall ?? DEFAULT_PERMISSIONS.hide_audit_hall,
+          hide_store_management: user.hide_store_management ?? permissions?.hide_store_management ?? DEFAULT_PERMISSIONS.hide_store_management,
+          only_view_config: user.only_view_config ?? permissions?.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config,
+          
           allowed_store_ids: user.allowed_store_ids || [],
           is_archived: false
-      });
+      };
+
+      const { error } = await client.from('users').insert(payload);
       if (error) throw new Error(error.message);
   }
 
@@ -103,10 +118,28 @@ class DataService {
       const client = this.getClient();
       if (!client) return;
       
-      const { permissions, ...safeUpdates } = updates as any;
+      const { permissions, ...userData } = updates as any;
+      
+      // If permissions object is present in updates, merge it into flat fields
+      let payload = { ...userData };
+      if (permissions) {
+          payload = {
+              ...payload,
+              logs_level: permissions.logs_level,
+              announcement_rule: permissions.announcement_rule,
+              store_scope: permissions.store_scope,
+              show_excel: permissions.show_excel,
+              view_peers: permissions.view_peers,
+              view_self_in_list: permissions.view_self_in_list,
+              hide_perm_page: permissions.hide_perm_page,
+              hide_audit_hall: permissions.hide_audit_hall,
+              hide_store_management: permissions.hide_store_management,
+              only_view_config: permissions.only_view_config
+          };
+      }
 
-      await this.logClientAction('UPDATE_USER', { id, safeUpdates });
-      const { error } = await client.from('users').update(safeUpdates).eq('id', id);
+      await this.logClientAction('UPDATE_USER', { id, payload });
+      const { error } = await client.from('users').update(payload).eq('id', id);
       if (error) throw new Error(error.message);
   }
 
@@ -114,6 +147,7 @@ class DataService {
       const client = this.getClient();
       if(!client) return;
       await this.logClientAction('DELETE_USER', { id });
+      // Soft Delete Only
       await client.from('users').update({ is_archived: true }).eq('id', id);
   }
 
@@ -154,9 +188,11 @@ class DataService {
       const user = authService.getCurrentUser();
       
       if (force) {
+          // Admin "Force Delete" -> invalidates for everyone (mark is_force_deleted)
           await this.logClientAction('FORCE_DELETE_ANNOUNCEMENT', { id });
           await client.from('announcements').update({ is_force_deleted: true }).eq('id', id);
       } else {
+          // Soft delete for "My Announcements" (hide from self)
           const { data: ann } = await client.from('announcements').select('read_by').eq('id', id).single();
           if (ann && user) {
               const reads = ann.read_by || [];
@@ -185,11 +221,13 @@ class DataService {
     const client = this.getClient();
     if(!client) return [];
     
+    // Fetch only non-archived
     const { data, error } = await client.from('stores').select('*').or('is_archived.is.null,is_archived.eq.false');
     if (error) throw new Error(error.message);
     
+    // Global filter based on User Permissions
     const user = authService.getCurrentUser();
-    // Using user-specific permission scope
+    // Using fresh matrix check via context would be ideal, but here we use the hydrated user object which has permissions mapped from view
     if (user && user.permissions.store_scope === 'LIMITED') {
         const allowed = new Set(user.allowed_store_ids || []);
         return (data || []).filter(s => allowed.has(s.id));
@@ -220,6 +258,8 @@ class DataService {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       
+      // Strict Constraint: Check aggregated stock for this store across all ACTIVE batches
+      // We sum up the quantity of all batches belonging to this store that are not archived.
       const { data: batches } = await client.from('batches')
           .select('quantity')
           .eq('store_id', id)
@@ -232,6 +272,7 @@ class DataService {
       }
 
       await this.logClientAction('DELETE_STORE', { id });
+      // Soft Delete
       const { error } = await client.from('stores').update({ is_archived: true }).eq('id', id);
       if(error) throw new Error(error.message);
   }
@@ -261,10 +302,13 @@ class DataService {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       
+      // Extract change details for LOG
       const { data: old } = await client.from('products').select('*').eq('id', id).single();
+      
       const { error } = await client.from('products').update(updates).eq('id', id);
       if (error) throw new Error(error.message);
 
+      // Log Transaction for ADJUST (Property change)
       const user = authService.getCurrentUser();
       const changeDesc = Object.keys(updates).map(k => `${k}: [${(old as any)[k]}]->[${(updates as any)[k]}]`).join(', ');
       
@@ -276,7 +320,7 @@ class DataService {
           timestamp: new Date().toISOString(),
           note: `修改商品属性: ${changeDesc}`,
           operator: user?.username || 'System',
-          snapshot_data: { old: old, new: updates }
+          snapshot_data: { old: old, new: updates } // Save full old record for rollback
       });
   }
 
@@ -286,11 +330,15 @@ class DataService {
       
       const user = authService.getCurrentUser();
       const { data: prod } = await client.from('products').select('name').eq('id', id).single();
+      
+      // Also fetch batch count for logging
       const { count } = await client.from('batches').select('*', { count: 'exact', head: true }).eq('product_id', id).gt('quantity', 0);
 
+      // Soft Delete Only
       const { error } = await client.from('products').update({ is_archived: true }).eq('id', id);
       if (error) throw new Error(error.message);
 
+      // Record transaction
       await client.from('transactions').insert({
           id: crypto.randomUUID(),
           type: 'DELETE',
@@ -311,6 +359,7 @@ class DataService {
     query = query.or('is_archived.is.null,is_archived.eq.false');
     
     if (storeId && storeId !== 'all') query = query.eq('store_id', storeId);
+    
     if (productId) query = query.eq('product_id', productId);
     
     const { data, error } = await query;
@@ -326,6 +375,7 @@ class DataService {
     const client = this.getClient();
     if(!client) return [];
     
+    // Filter out undone transactions
     let query = client
       .from('transactions')
       .select('*, product:products(name), store:stores(name)')
@@ -336,11 +386,11 @@ class DataService {
     if (filterType && filterType !== 'ALL') query = query.eq('type', filterType);
     if (startDate) query = query.gte('timestamp', startDate);
     
-    // Store Scope check using per-user permission
-    const user = authService.getCurrentUser();
+    // Store isolation for Logs
     if (storeId && storeId !== 'all') {
         query = query.eq('store_id', storeId);
     } else {
+        const user = authService.getCurrentUser();
         if (user && user.permissions.store_scope === 'LIMITED') {
              query = query.in('store_id', user.allowed_store_ids || []);
         }
@@ -352,6 +402,7 @@ class DataService {
     const allTransactions = data || [];
 
     // --- LOG PERMISSION FILTERING ---
+    const user = authService.getCurrentUser();
     if (!user) return [];
 
     const logLevel = user.permissions.logs_level;
@@ -420,17 +471,22 @@ class DataService {
         .sort((a,b) => a.date.localeCompare(b.date));
   }
 
-  // --- RPC Wrappers (Stock Ops) ---
-  // ... (Code for stock ops remains largely same, just checking user.permissions.*)
-  
-  async updateStock(productId: string, storeId: string, quantityChange: number, type: 'IN' | 'OUT', note?: string, batchId?: string): Promise<void> {
+  // --- ATOMIC OPERATIONS (RPC) ---
+
+  async updateStock(
+      productId: string, 
+      storeId: string, 
+      quantityChange: number, 
+      type: 'IN' | 'OUT', 
+      note?: string,
+      batchId?: string 
+  ): Promise<void> {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
 
       const user = authService.getCurrentUser();
       if (!batchId) throw new Error("Batch ID required");
 
-      // Per-User Scope Check
       if (user?.permissions.store_scope === 'LIMITED') {
           if (!user.allowed_store_ids.includes(storeId)) {
                throw new Error("无权操作此门店");
@@ -439,6 +495,7 @@ class DataService {
 
       const { data: batch } = await client.from('batches').select('*').eq('id', batchId).single();
       const { data: product } = await client.from('products').select('*').eq('id', productId).single();
+
       const snapshot = { batch, product, tx_context: 'manual_update' };
 
       const { error } = await client.rpc('operate_stock', {
@@ -462,6 +519,7 @@ class DataService {
         if (!user.allowed_store_ids.includes(storeId)) throw new Error("无权操作此门店");
     }
 
+    // Strict store filter
     let query = client.from('batches').select('*').eq('product_id', productId).gt('quantity', 0).or('is_archived.is.null,is_archived.eq.false').eq('store_id', storeId).order('expiry_date', { ascending: true });
 
     const { data: batches } = await query;
@@ -496,6 +554,7 @@ class DataService {
       const { data: oldBatch } = await client.from('batches').select('*').eq('id', batchId).single();
       const user = authService.getCurrentUser();
 
+      // Handle Quantity via Stock Op
       if (updates.quantity !== undefined && oldBatch) {
           const delta = updates.quantity - oldBatch.quantity;
           if (delta !== 0) {
@@ -504,6 +563,8 @@ class DataService {
                        throw new Error("无权操作此门店");
                   }
               }
+
+              // Use RPC directly for ADJUST
               const { error } = await client.rpc('operate_stock', {
                   p_batch_id: batchId,
                   p_qty_change: delta,
@@ -517,9 +578,12 @@ class DataService {
           delete updates.quantity;
       }
 
+      // Handle property adjustments
       if (Object.keys(updates).length > 0) {
           const changeDesc = Object.keys(updates).map(k => `${k}: [${(oldBatch as any)[k]}]->[${(updates as any)[k]}]`).join(', ');
+          
           await client.from('batches').update(updates).eq('id', batchId);
+          
           await client.from('transactions').insert({
               id: crypto.randomUUID(),
               type: 'ADJUST',
@@ -530,7 +594,7 @@ class DataService {
               timestamp: new Date().toISOString(),
               note: `修改批次属性: ${changeDesc}`,
               operator: user?.username || 'System',
-              snapshot_data: { old: oldBatch, updates }
+              snapshot_data: { old: oldBatch, updates } // Full snapshot for undo
           });
       }
   }
@@ -542,6 +606,7 @@ class DataService {
       const user = authService.getCurrentUser();
       const { data: batch } = await client.from('batches').select('*, product:products(*)').eq('id', batchId).single();
 
+      // Always Soft Delete
       const { error } = await client.from('batches').update({ is_archived: true }).eq('id', batchId);
       if (error) throw new Error(error.message);
 
@@ -569,6 +634,7 @@ class DataService {
       }
 
       const id = crypto.randomUUID();
+      // Insert with initial 0
       const { error } = await client.from('batches').insert({ ...batch, id, quantity: 0, created_at: new Date().toISOString(), is_archived: false });
       if (error) throw new Error(error.message);
 
@@ -578,6 +644,7 @@ class DataService {
       return id;
   }
 
+  // --- UNDO ---
   async undoTransaction(transactionId: string): Promise<void> {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
@@ -588,7 +655,7 @@ class DataService {
       if (!user) return;
       const p = user.permissions;
       
-      // Strict Logic based on User Permission Fields
+      // Permission Checks
       if (p.logs_level === 'D') {
           if (tx.operator !== user.username) throw new Error("权限不足: D级用户只能撤销自己的操作");
       }
@@ -596,20 +663,30 @@ class DataService {
           if (tx.operator !== user.username) throw new Error("权限不足: C级用户只能撤销自己的操作");
       }
       else if (p.logs_level === 'B') {
+          // B Level: Can undo self OR lower level
           if (tx.operator !== user.username) {
               const { data: opUser } = await client.from('users').select('role_level').eq('username', tx.operator).single();
+              // If operator is found and has equal/higher level (lower number), Deny
+              // Note: role_level 0 is highest. so if opUser.level <= myLevel, deny.
               if (opUser && opUser.role_level <= user.role_level) {
                   throw new Error("权限不足: B级用户只能撤销低等级用户的操作");
               }
           }
       }
+      // A Level: Undo Any (No check needed)
 
       await this.logClientAction('UNDO_TRANSACTION', { transactionId });
       
+      // Handle different types
       if (tx.type === 'ADJUST') {
+          // Snapshot Rollback Strategy
           const oldData = tx.snapshot_data?.old;
           if (oldData) {
+              // Be careful not to overwrite IDs or unrelated fields if schema drifted, 
+              // but for this app assuming stability. 
+              // We remove 'id' from update payload to be safe.
               const { id, ...updatePayload } = oldData;
+              
               if (tx.batch_id) {
                   await client.from('batches').update(updatePayload).eq('id', tx.batch_id);
               } else if (tx.product_id) {
@@ -631,6 +708,7 @@ class DataService {
           if (error) throw new Error(error.message);
       } 
       else if (tx.type === 'DELETE') {
+          // Soft Delete Restore
           if (tx.batch_id) {
               await client.from('batches').update({ is_archived: false }).eq('id', tx.batch_id);
           }
@@ -639,6 +717,7 @@ class DataService {
           }
       }
 
+      // Mark as undone
       await client.from('transactions').update({ is_undone: true }).eq('id', transactionId);
   }
 }

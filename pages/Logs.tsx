@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { Transaction, User, RoleLevel } from '../types';
@@ -24,7 +25,7 @@ export const Logs: React.FC = () => {
                 dataService.getUsers()
             ]);
             
-            // Build User Map for Colors
+            // Build User Map for Colors based on username -> role level
             const uMap = new Map<string, RoleLevel>();
             users.forEach(u => uMap.set(u.username, u.role_level));
             setUserMap(uMap);

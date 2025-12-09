@@ -1,87 +1,98 @@
 
+
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { getSupabaseClient, isConfigured } from '../services/supabaseClient';
-import { RoleLevel, UserPermissions } from '../types';
+import { UserPermissions, RoleLevel } from '../types';
 import { DEFAULT_PERMISSIONS, authService } from '../services/authService';
 
 interface PermissionContextType {
-    // We now just expose the current user's permissions, which might be updated in realtime
-    getPermission: (level: RoleLevel) => UserPermissions;
+    // We no longer expose a global matrix. We expose the current user's LIVE permissions.
+    currentUserPermissions: UserPermissions;
+    loading: boolean;
+    getPermission: (level: RoleLevel) => UserPermissions; // Fallback helper if needed for other users, though mostly used for self
 }
 
 const PermissionContext = createContext<PermissionContextType>({
+    currentUserPermissions: DEFAULT_PERMISSIONS,
+    loading: true,
     getPermission: () => DEFAULT_PERMISSIONS
 });
 
 export const PermissionProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-    // We track the current user's permissions in state to trigger re-renders
-    const [currentUserPerms, setCurrentUserPerms] = useState<UserPermissions>(DEFAULT_PERMISSIONS);
-    const user = authService.getCurrentUser();
+    const [currentUserPermissions, setCurrentUserPermissions] = useState<UserPermissions>(DEFAULT_PERMISSIONS);
+    const [loading, setLoading] = useState(true);
+    const currentUser = authService.getCurrentUser();
 
     useEffect(() => {
-        if (!isConfigured() || !user) return;
-
-        // Initialize from session user
-        if (user.permissions) {
-            setCurrentUserPerms(user.permissions);
+        if (!isConfigured() || !currentUser) {
+            setLoading(false);
+            if (currentUser) setCurrentUserPermissions(currentUser.permissions || DEFAULT_PERMISSIONS);
+            return;
         }
+
+        // Initialize from session
+        setCurrentUserPermissions(currentUser.permissions || DEFAULT_PERMISSIONS);
 
         const client = getSupabaseClient();
         if (!client) return;
 
-        // Realtime Subscription: Listen to changes on the USERS table for THIS user
-        // When admin updates this user's permissions, we update local state immediately.
-        const channel = client.channel(`user_perms_${user.id}`)
+        // Realtime Subscription to USERS table for the CURRENT USER ID
+        const channel = client.channel(`user_perms_${currentUser.id}`)
             .on(
                 'postgres_changes',
                 { 
                     event: 'UPDATE', 
                     schema: 'public', 
                     table: 'users',
-                    filter: `id=eq.${user.id}` 
+                    filter: `id=eq.${currentUser.id}`
                 },
                 (payload) => {
-                    const row = payload.new;
-                    // Construct new permissions object from the updated row
+                    const newUserRow = payload.new;
+                    // Map flat columns to permissions object
                     const newPerms: UserPermissions = {
-                        role_level: row.role_level,
-                        logs_level: row.logs_level || 'D',
-                        announcement_rule: row.announcement_rule || 'VIEW',
-                        store_scope: row.store_scope || 'LIMITED',
-                        show_excel: row.show_excel ?? false,
-                        view_peers: row.view_peers ?? false,
-                        view_self_in_list: row.view_self_in_list ?? true,
-                        hide_perm_page: row.hide_perm_page ?? true,
-                        hide_audit_hall: row.hide_audit_hall ?? true,
-                        hide_store_management: row.hide_store_management ?? true,
-                        only_view_config: row.only_view_config ?? false
+                        role_level: newUserRow.role_level,
+                        logs_level: newUserRow.logs_level || DEFAULT_PERMISSIONS.logs_level,
+                        announcement_rule: newUserRow.announcement_rule || DEFAULT_PERMISSIONS.announcement_rule,
+                        store_scope: newUserRow.store_scope || DEFAULT_PERMISSIONS.store_scope,
+                        show_excel: newUserRow.show_excel ?? DEFAULT_PERMISSIONS.show_excel,
+                        view_peers: newUserRow.view_peers ?? DEFAULT_PERMISSIONS.view_peers,
+                        view_self_in_list: newUserRow.view_self_in_list ?? DEFAULT_PERMISSIONS.view_self_in_list,
+                        hide_perm_page: newUserRow.hide_perm_page ?? DEFAULT_PERMISSIONS.hide_perm_page,
+                        hide_audit_hall: newUserRow.hide_audit_hall ?? DEFAULT_PERMISSIONS.hide_audit_hall,
+                        hide_store_management: newUserRow.hide_store_management ?? DEFAULT_PERMISSIONS.hide_store_management,
+                        only_view_config: newUserRow.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config
                     };
                     
-                    // Update authService session to persist across refresh
-                    const updatedUser = { ...user, ...row, permissions: newPerms };
-                    authService.setSession(updatedUser);
+                    setCurrentUserPermissions(newPerms);
                     
-                    setCurrentUserPerms(newPerms);
+                    // Update session storage silently so refresh works
+                    const updatedUser = { ...currentUser, ...newUserRow, permissions: newPerms };
+                    authService.setSession(updatedUser);
                 }
             )
             .subscribe();
 
+        setLoading(false);
+
         return () => {
             client.removeChannel(channel);
         };
-    }, [user?.id]);
+    }, [currentUser?.id]);
 
+    // Helper: primarily used for checking other users or fallback
     const getPermission = (level: RoleLevel) => {
-        // If the requested level matches current user, return the live state
-        if (user && user.role_level === level) {
-            return currentUserPerms;
+        // In the new system, permissions are per-user. 
+        // If we are asked for permissions based purely on role level (legacy behavior), 
+        // we return defaults. Ideally the app should pass the full User object.
+        // For self-checks, we return the live state.
+        if (currentUser && currentUser.role_level === level) {
+            return currentUserPermissions;
         }
-        // Fallback (shouldn't really happen for self-check)
         return DEFAULT_PERMISSIONS;
     };
 
     return (
-        <PermissionContext.Provider value={{ getPermission }}>
+        <PermissionContext.Provider value={{ currentUserPermissions, loading, getPermission }}>
             {children}
         </PermissionContext.Provider>
     );
@@ -90,7 +101,13 @@ export const PermissionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
 export const usePermissionContext = () => useContext(PermissionContext);
 
 export const useUserPermissions = (userRole: RoleLevel | undefined) => {
-    const { getPermission } = usePermissionContext();
-    // In the new architecture, we mostly care about "My Permissions" which are stored in Context
+    const { currentUserPermissions, getPermission } = usePermissionContext();
+    const currentUser = authService.getCurrentUser();
+    
+    // If querying for the current logged-in user, return live state
+    if (currentUser && userRole === currentUser.role_level) {
+        return currentUserPermissions;
+    }
+    
     return getPermission(userRole ?? 9);
 };
