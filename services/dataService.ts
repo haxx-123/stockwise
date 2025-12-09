@@ -45,7 +45,21 @@ class DataService {
       } 
       
       // Map flat DB columns to User structure with permissions object
-      return (data || []).map((row: any) => ({
+      return (data || []).map((row: any) => this.mapRowToUser(row));
+  }
+
+  async getUser(id: string): Promise<User | null> {
+      const client = this.getClient();
+      if (!client) return null;
+      
+      const { data, error } = await client.from('users').select('*').eq('id', id).single();
+      if (error || !data) return null;
+
+      return this.mapRowToUser(data);
+  }
+
+  private mapRowToUser(row: any): User {
+      return {
           id: row.id,
           username: row.username,
           password: row.password,
@@ -80,7 +94,7 @@ class DataService {
               hide_store_management: row.hide_store_management ?? DEFAULT_PERMISSIONS.hide_store_management,
               only_view_config: row.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config
           } as UserPermissions
-      }));
+      };
   }
 
   async createUser(user: Omit<User, 'id'>): Promise<void> {
@@ -138,7 +152,8 @@ class DataService {
           };
       }
 
-      await this.logClientAction('UPDATE_USER', { id, payload });
+      // No sensitive log if it's just a realtime patch, but good to keep trace
+      // await this.logClientAction('UPDATE_USER', { id, payload });
       const { error } = await client.from('users').update(payload).eq('id', id);
       if (error) throw new Error(error.message);
   }

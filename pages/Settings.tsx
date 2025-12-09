@@ -1,4 +1,5 @@
 
+
 import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -36,7 +37,7 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     // UPDATED SQL SCRIPT FOR USER-CENTRIC PERMISSIONS
     const sqlScript = `
 -- STOCKWISE V3.3.0 USER-CENTRIC PERMISSIONS & ARRAY SUPPORT
--- SQL是/否较上一次发生更改: 是
+-- SQL是/否较上一次发生更改: 否
 -- SQL是/否必须包含重置数据库: 否
 
 -- Enable UUID extension
@@ -160,16 +161,33 @@ END $$;
 };
 
 // --- ISOLATED PERMISSION MATRIX COMPONENT ---
-// Handles Optimistic UI + Direct DB Updates
-const PermissionMatrix = ({ user, stores, onLocalChange }: { user: Partial<User>, stores: Store[], onLocalChange?: (field: string, val: any) => void }) => {
+// Handles Optimistic UI + Direct DB Updates + Fresh Fetch
+const PermissionMatrix = ({ userId, initialUser, stores, onLocalChange }: { userId?: string, initialUser: Partial<User>, stores: Store[], onLocalChange?: (field: string, val: any) => void }) => {
     // Local State for Immediate UI Feedback (Optimistic UI)
-    const [localPerms, setLocalPerms] = useState<Partial<User>>(user);
-    const isEditing = !!user.id; // If ID exists, we are editing an existing user (Direct DB Mode)
+    const [localPerms, setLocalPerms] = useState<Partial<User>>(initialUser);
+    const [loading, setLoading] = useState(!!userId);
 
-    // Sync when user prop changes (e.g. switching users)
+    // FETCH FRESH DATA ON MOUNT IF EDITING
     useEffect(() => {
-        setLocalPerms(user);
-    }, [user]);
+        if (userId) {
+            setLoading(true);
+            dataService.getUser(userId).then(freshUser => {
+                if (freshUser) {
+                    console.log(`[PermissionMatrix] Fetched fresh data for ${userId}`, freshUser);
+                    setLocalPerms(freshUser);
+                }
+                setLoading(false);
+            });
+        } else {
+            // Creation mode: sync from props if initialUser changes
+             setLocalPerms(initialUser);
+             setLoading(false);
+        }
+    }, [userId]); 
+
+    // IMPORTANT: In Edit Mode (userId exists), we DO NOT sync localPerms from initialUser prop updates.
+    // This prevents the parent list (which might be stale or updating slowly via realtime)
+    // from overwriting our fresh, optimistic local state.
 
     const handleUpdate = async (field: keyof User, value: any) => {
         // 1. Optimistic Update (Immediate UI Switch)
@@ -180,10 +198,10 @@ const PermissionMatrix = ({ user, stores, onLocalChange }: { user: Partial<User>
         console.log(`[PermissionMatrix] Toggling ${field} to`, value);
 
         // 2. Direct DB Write (if editing)
-        if (isEditing && user.id) {
+        if (userId) {
             try {
                 // Fire update immediately
-                await dataService.updateUser(user.id, { [field]: value });
+                await dataService.updateUser(userId, { [field]: value });
                 // If success, do nothing (state already updated)
             } catch (error: any) {
                 console.error("DB Update Failed:", error);
@@ -197,11 +215,15 @@ const PermissionMatrix = ({ user, stores, onLocalChange }: { user: Partial<User>
         }
     };
 
+    if (loading) {
+        return <div className="p-8 text-center text-gray-500 animate-pulse">正在获取最新权限配置...</div>;
+    }
+
     return (
         <div className="space-y-4">
             <h3 className="font-bold text-lg dark:text-white border-b pb-2 dark:border-gray-700 flex justify-between items-center">
                 <span>权限矩阵配置</span>
-                <span className="text-xs font-normal text-gray-500">{isEditing ? '实时保存' : '保存需点击底部按钮'}</span>
+                <span className="text-xs font-normal text-gray-500">{userId ? '实时保存 (独立模式)' : '保存需点击底部按钮'}</span>
             </h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -311,6 +333,10 @@ const PermissionMatrix = ({ user, stores, onLocalChange }: { user: Partial<User>
                         <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
                             <input type="checkbox" checked={localPerms.hide_store_management} onChange={e => handleUpdate('hide_store_management', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
                             <span className="text-sm dark:text-gray-300">隐藏门店管理 (增删改)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                            <input type="checkbox" checked={localPerms.only_view_config} onChange={e => handleUpdate('only_view_config', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
+                            <span className="text-sm dark:text-gray-300">仅显示配置页</span>
                         </label>
                     </div>
                 </div>
@@ -540,7 +566,8 @@ const PermissionsSettings = () => {
                                              className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"
                                          />
                                          <p className="text-xs text-red-400 mt-1">
-                                             * &gt;= {currentUser?.role_level} (您的等级)
+                                             * &gt;= {currentUser?.role_level} (您的等级)<br/>
+                                             {editingUser && `* 编辑时只能调低等级 (数字变大，当前: ${editingUser.role_level})`}
                                          </p>
                                      </div>
                                  </div>
@@ -548,7 +575,8 @@ const PermissionsSettings = () => {
 
                              {/* Permission Matrix Embedded Component */}
                              <PermissionMatrix 
-                                 user={userFormData} 
+                                 userId={editingUser?.id}
+                                 initialUser={userFormData} 
                                  stores={stores} 
                                  onLocalChange={handleNewUserPermissionChange} 
                              />
