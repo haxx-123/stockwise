@@ -63,13 +63,14 @@ class AuthService {
             return true;
         }
 
-        // 2. Check DB Users
+        // 2. Check DB Users (Now queries View via dataService)
         try {
             const users = await dataService.getUsers(); 
             const user = users.find(u => u.username === username && u.password === passwordInput);
             
             if (user) {
                 // Ensure permissions object exists and has defaults for new fields
+                // Although view should provide them, we safety merge
                 user.permissions = { ...DEFAULT_PERMISSIONS, ...user.permissions };
                 
                 this.currentUser = user;

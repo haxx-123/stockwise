@@ -1,5 +1,5 @@
 
-import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel } from '../types';
+import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel, UserPermissions } from '../types';
 import { getSupabaseClient } from './supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from './authService';
 
@@ -26,17 +26,47 @@ class DataService {
       });
   }
 
-  // --- Users ---
+  // --- Users (Architecture Refactor: Use View) ---
   async getUsers(includeArchived = false): Promise<User[]> {
       const client = this.getClient();
       if (!client) return [];
-      let query = client.from('users').select('*');
+      
+      // Query the VIEW, not the table
+      let query = client.from('live_users_v').select('*');
+      
       if (!includeArchived) {
           query = query.or('is_archived.is.null,is_archived.eq.false');
       }
       const { data, error } = await query;
-      if (error) return []; 
-      return data || [];
+      if (error) {
+          console.error("View Fetch Error:", error);
+          return [];
+      } 
+      
+      // Map flat view fields back to User structure
+      return (data || []).map((row: any) => ({
+          id: row.id,
+          username: row.username,
+          password: row.password,
+          role_level: row.role_level,
+          allowed_store_ids: row.allowed_store_ids,
+          is_archived: row.is_archived,
+          face_descriptor: row.face_descriptor,
+          // Reconstruct permissions object from flat columns for app compatibility
+          permissions: {
+              role_level: row.role_level,
+              logs_level: row.logs_level,
+              announcement_rule: row.announcement_rule,
+              store_scope: row.store_scope,
+              show_excel: row.show_excel,
+              view_peers: row.view_peers,
+              view_self_in_list: row.view_self_in_list,
+              hide_perm_page: row.hide_perm_page,
+              hide_audit_hall: row.hide_audit_hall,
+              hide_store_management: row.hide_store_management,
+              only_view_config: row.only_view_config
+          } as UserPermissions
+      }));
   }
 
   async createUser(user: Omit<User, 'id'>): Promise<void> {
@@ -46,10 +76,14 @@ class DataService {
       const currentUser = authService.getCurrentUser();
       await this.logClientAction('CREATE_USER', { target: user.username });
 
+      // Insert only into USERS table. Logic for permissions is handled by Matrix join in View.
+      // We drop the 'permissions' field from payload as it's no longer in the table.
+      const { permissions, ...userData } = user as any;
+
       const { error } = await client.from('users').insert({ 
-          ...user, 
+          ...userData, 
           id: crypto.randomUUID(),
-          permissions: user.permissions || DEFAULT_PERMISSIONS,
+          // Defaulting if missing
           allowed_store_ids: user.allowed_store_ids || [],
           is_archived: false
       });
@@ -59,8 +93,12 @@ class DataService {
   async updateUser(id: string, updates: Partial<User>): Promise<void> {
       const client = this.getClient();
       if (!client) return;
-      await this.logClientAction('UPDATE_USER', { id, updates });
-      const { error } = await client.from('users').update(updates).eq('id', id);
+      
+      // Filter out permissions from updates
+      const { permissions, ...safeUpdates } = updates as any;
+
+      await this.logClientAction('UPDATE_USER', { id, safeUpdates });
+      const { error } = await client.from('users').update(safeUpdates).eq('id', id);
       if (error) throw new Error(error.message);
   }
 
@@ -148,6 +186,7 @@ class DataService {
     
     // Global filter based on User Permissions
     const user = authService.getCurrentUser();
+    // Using fresh matrix check via context would be ideal, but here we use the hydrated user object which has permissions mapped from view
     if (user && user.permissions.store_scope === 'LIMITED') {
         const allowed = new Set(user.allowed_store_ids || []);
         return (data || []).filter(s => allowed.has(s.id));
@@ -277,13 +316,17 @@ class DataService {
     
     let query = client.from('batches').select('*, store:stores(name)');
     query = query.or('is_archived.is.null,is_archived.eq.false');
-    if (storeId) query = query.eq('store_id', storeId);
+    
+    // IMPORTANT: If storeId is undefined/null/'all', we return ALL batches from ALL stores.
+    // This supports the inventory aggregation logic.
+    if (storeId && storeId !== 'all') query = query.eq('store_id', storeId);
+    
     if (productId) query = query.eq('product_id', productId);
     
     const { data, error } = await query;
     if (error) throw new Error(error.message);
     
-    return (data || []).filter((b: any) => b.quantity > 0).map((b: any) => ({
+    return (data || []).filter((b: any) => b.quantity >= 0).map((b: any) => ({
         ...b,
         store_name: b.store?.name
     }));

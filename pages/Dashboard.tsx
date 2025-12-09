@@ -1,8 +1,4 @@
 
-
-
-
-
 import React, { useMemo, useEffect, useState } from 'react';
 import { Icons } from '../components/Icons';
 import { Product, Batch } from '../types';
@@ -65,22 +61,33 @@ export const Dashboard: React.FC<DashboardProps> = ({ currentStore, onNavigate }
     const expiryThresholdDate = new Date();
     expiryThresholdDate.setDate(new Date().getDate() + expiryDays);
     const productQtyMap = new Map<string, number>();
+    const productHasBatchesMap = new Map<string, boolean>();
     const expiringBatches: Batch[] = [];
 
     batches.forEach(b => {
       totalItems += b.quantity;
       const current = productQtyMap.get(b.product_id) || 0;
       productQtyMap.set(b.product_id, current + b.quantity);
+      
+      if (b.quantity > 0) {
+          productHasBatchesMap.set(b.product_id, true);
+      }
+
       if (b.expiry_date && new Date(b.expiry_date) < expiryThresholdDate) expiringBatches.push(b);
     });
 
     const lowStockProducts: Product[] = [];
     products.forEach(p => {
       const rawQty = productQtyMap.get(p.id) || 0;
+      const hasStock = productHasBatchesMap.get(p.id) || false;
       const ratio = p.split_ratio || 10; 
       const bigUnitQty = rawQty / ratio; 
       const limit = p.min_stock_level !== undefined && p.min_stock_level !== null ? p.min_stock_level : lowStockLimit;
-      if (bigUnitQty < limit) lowStockProducts.push(p);
+      
+      // Filter: Must be below limit AND have at least some batches/stock (exclude empty items as requested)
+      if (bigUnitQty < limit && hasStock) {
+          lowStockProducts.push(p);
+      }
     });
 
     return { totalItems, lowStockProducts, expiringBatches };

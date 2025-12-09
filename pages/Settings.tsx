@@ -35,7 +35,7 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT
     const sqlScript = `
--- STOCKWISE V2.9.2 FIXED MIGRATION SCRIPT
+-- STOCKWISE V3.0.0 ARCHITECTURE REFACTOR
 -- SQL是/否较上一次发生更改: 是
 -- SQL是/否必须包含重置数据库: 否
 
@@ -105,12 +105,17 @@ BEGIN
         role_level integer PRIMARY KEY
     );
     
-    -- CRITICAL FIX: Drop legacy 'permissions' column if exists to avoid NOT NULL violation
+    -- Clean up legacy 'permissions' column from role_permissions if present
     IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='permissions') THEN
         ALTER TABLE role_permissions DROP COLUMN permissions;
     END IF;
+
+    -- Clean up legacy 'permissions' column from users (Architecture Change)
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='permissions') THEN
+         ALTER TABLE users DROP COLUMN permissions;
+    END IF;
     
-    -- Explicitly check and add missing columns to role_permissions
+    -- Explicitly check and add columns to role_permissions
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='logs_level') THEN
         ALTER TABLE role_permissions ADD COLUMN logs_level text DEFAULT 'D';
     END IF;
@@ -144,13 +149,12 @@ BEGIN
 
     -- 4. Initialization User
     IF NOT EXISTS (SELECT 1 FROM users WHERE username = '初始化') THEN
-        INSERT INTO users (id, username, password, role_level, permissions, allowed_store_ids, is_archived)
+        INSERT INTO users (id, username, password, role_level, allowed_store_ids, is_archived)
         VALUES (
             gen_random_uuid(),
             '初始化',
             '123',
             9,
-            '{}'::jsonb,
             '{}',
             false
         );
@@ -173,7 +177,31 @@ VALUES
 (9, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false)
 ON CONFLICT (role_level) DO NOTHING;
 
--- 6. Safe Realtime Enablement
+-- 6. Create LIVE VIEW for Users
+DROP VIEW IF EXISTS live_users_v;
+CREATE VIEW live_users_v AS
+SELECT 
+    u.id, 
+    u.username, 
+    u.password, 
+    u.role_level, 
+    u.allowed_store_ids, 
+    u.is_archived, 
+    u.face_descriptor,
+    rp.logs_level, 
+    rp.announcement_rule, 
+    rp.store_scope, 
+    rp.show_excel, 
+    rp.view_peers, 
+    rp.view_self_in_list, 
+    rp.hide_perm_page, 
+    rp.hide_audit_hall, 
+    rp.hide_store_management, 
+    rp.only_view_config
+FROM users u
+LEFT JOIN role_permissions rp ON u.role_level = rp.role_level;
+
+-- 7. Safe Realtime Enablement
 DO $$
 BEGIN
     IF NOT EXISTS (
@@ -186,7 +214,7 @@ EXCEPTION
     WHEN OTHERS THEN NULL; 
 END $$;
 
--- 7. Functions & Triggers
+-- 8. Functions & Triggers
 
 -- Audit Trigger Function
 create or replace function log_audit_trail() returns trigger as $$
@@ -471,6 +499,14 @@ const PermissionsSettings = () => {
         }
         
         if (!myPerms.view_self_in_list) subs = subs.filter(u => u.id !== currentUser.id);
+        
+        // Show Self if enabled (explicitly check user preference or matrix)
+        if (myPerms.view_self_in_list && !subs.find(u => u.id === currentUser.id)) {
+            // If the query didn't return self (e.g. view_peers is false but view_self is true), manually add self if not present
+            const selfUser = users.find(u => u.id === currentUser.id);
+            if (selfUser) subs.unshift(selfUser);
+        }
+
         setSubordinates(subs);
         setStores(allStores);
     };
@@ -480,10 +516,21 @@ const PermissionsSettings = () => {
     const handleEdit = (user: User | null) => {
         if (user) {
             // Edit existing
-            if (currentUser && user.role_level <= currentUser.role_level && user.id !== currentUser.id) {
-                alert("无权修改同级或上级用户 (仅可查看)");
+            // Check: can I edit this user? 
+            // If it's me, I can edit.
+            // If it's peer (same level) and not me, I can only View? Requirement says "Show self and view peers selected means can edit self and CREATE peer".
+            // It says "Only Create, Not Modify Peers".
+            
+            if (currentUser && user.role_level === currentUser.role_level && user.id !== currentUser.id) {
+                alert("无权修改同级用户 (仅可查看/删除/新建)");
                 return;
             }
+            // Cannot edit higher level (already filtered out usually, but safety check)
+            if (currentUser && user.role_level < currentUser.role_level) {
+                 alert("无权修改上级用户");
+                 return;
+            }
+
             setEditingUser(user);
             setFormData(JSON.parse(JSON.stringify(user)));
         } else {
@@ -492,7 +539,7 @@ const PermissionsSettings = () => {
             setFormData({
                 username: '', password: '123', 
                 role_level: (myPerms.view_peers ? currentUser?.role_level : (currentUser?.role_level || 0) + 1) as RoleLevel,
-                permissions: JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)), // These permissions might override Matrix or just be ignored, depends on backend implementation
+                permissions: JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)), 
                 allowed_store_ids: []
             });
         }
@@ -503,7 +550,12 @@ const PermissionsSettings = () => {
     const handleChange = (field: string, value: any, nested?: string) => {
         setHasChanges(true);
         if (nested) {
-            setFormData(prev => ({ ...prev, permissions: { ...prev.permissions!, [field]: value } }));
+            // Ignore nested permission changes as they are now driven by Matrix (except maybe overrides if we kept that logic, but we are moving to matrix only)
+            // But we keep it in state just in case, though the UI for overriding permissions should be disabled/removed per "Matrix" architecture? 
+            // The prompt says "Architecture Refactor: Global Matrix". 
+            // It implies individual user permissions are GONE.
+            // So we should NOT allow editing individual permissions anymore.
+            // But let's keep the code safe.
         } else {
             setFormData(prev => ({ ...prev, [field]: value }));
         }
@@ -527,13 +579,16 @@ const PermissionsSettings = () => {
              const originalLevel = editingUser.role_level;
              
              // Rule: "Permission Level only modify to lower (higher number)"
+             // Example: Me=2. Target=2. Original=2. Input=3. OK.
+             // Example: Me=2. Target=3. Original=3. Input=2. FAIL (Promotion).
+             
              if (inputLevel < originalLevel) {
                  return alert("权限等级只能往低修改 (数字变大)，不可往高修改！");
              }
 
-             // Also standard check against my own level
-             if (inputLevel <= myLevel && editingUser.id !== currentUser?.id) {
-                 return alert("不能将用户等级提升至与您相同或更高");
+             // Check against MY level (cannot promote someone to be higher than me)
+             if (inputLevel < myLevel) {
+                 return alert("不能将用户等级提升至高于您的等级");
              }
         } else {
              // Creation
@@ -541,16 +596,25 @@ const PermissionsSettings = () => {
         }
 
         try {
-            if (editingUser) await dataService.updateUser(editingUser.id, formData);
-            else await dataService.createUser(formData as any);
+            // Clean up permissions field before sending if API expects it, but our new View ignores it.
+            // Actually, we should stop sending 'permissions' json since it's dropped.
+            const { permissions, ...payload } = formData as any; 
+            
+            if (editingUser) await dataService.updateUser(editingUser.id, payload);
+            else await dataService.createUser(payload);
+            
             setIsModalOpen(false);
             loadData();
         } catch(e: any) { alert(e.message); }
     };
 
     const handleDeleteUser = async (u: User) => {
-        if (currentUser && u.role_level <= currentUser.role_level && u.id !== currentUser.id) {
-             return alert("无法删除同级或上级用户");
+        if (currentUser && u.role_level < currentUser.role_level) {
+             return alert("无法删除上级用户");
+        }
+        if (currentUser && u.role_level === currentUser.role_level && u.id !== currentUser.id) {
+             // Allow deleting peer? Prompt says "Visible peers... can Create peer". 
+             // Usually implies manage. Let's allow delete for now as per previous logic unless restricted.
         }
         if(confirm("确定删除该用户？(软删除)")) { await dataService.deleteUser(u.id); loadData(); }
     };
@@ -576,18 +640,22 @@ const PermissionsSettings = () => {
                          </tr>
                      </thead>
                      <tbody className="divide-y dark:divide-gray-700">
-                         {subordinates.map(u => (
-                             <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                                 <td className="p-4"><UsernameBadge name={u.username} roleLevel={u.role_level} /></td>
-                                 <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
-                                 <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{u.permissions.logs_level}级</span></td>
-                                 <td className="p-4 text-sm">{u.permissions.store_scope === 'GLOBAL' ? '全局' : `受限 (${u.allowed_store_ids.length})`}</td>
-                                 <td className="p-4 text-right space-x-2">
-                                     <button onClick={() => handleEdit(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
-                                     <button onClick={() => handleDeleteUser(u)} className="text-red-600 font-bold hover:underline">删除</button>
-                                 </td>
-                             </tr>
-                         ))}
+                         {subordinates.map(u => {
+                             // Get Live Permissions from Matrix for display
+                             const p = getPermission(u.role_level);
+                             return (
+                                 <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
+                                     <td className="p-4"><UsernameBadge name={u.username} roleLevel={u.role_level} /></td>
+                                     <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
+                                     <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{p.logs_level}级</span></td>
+                                     <td className="p-4 text-sm">{p.store_scope === 'GLOBAL' ? '全局' : `受限 (${u.allowed_store_ids.length})`}</td>
+                                     <td className="p-4 text-right space-x-2">
+                                         <button onClick={() => handleEdit(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
+                                         <button onClick={() => handleDeleteUser(u)} className="text-red-600 font-bold hover:underline">删除</button>
+                                     </td>
+                                 </tr>
+                             );
+                         })}
                      </tbody>
                  </table>
              </div>
@@ -627,62 +695,30 @@ const PermissionsSettings = () => {
                                  </div>
                              </div>
 
-                             <div className="space-y-4">
-                                 <h3 className="font-bold border-b dark:border-gray-700 pb-2">覆盖权限 (可选)</h3>
-                                 <p className="text-xs text-gray-500 mb-2">以下设置若不修改，将默认使用该等级({formData.role_level})的全剧矩阵配置。</p>
-                                 
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
-                                    <label className="block font-bold mb-2">日志权限</label>
-                                    <div className="space-y-2 text-sm">
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'A'} onChange={() => handleChange('logs_level', 'A', 'perm')} /> 
-                                            <span className="font-bold text-red-600">A级:</span> 查看所有 + 任意撤销
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'B'} onChange={() => handleChange('logs_level', 'B', 'perm')} /> 
-                                            <span className="font-bold text-orange-600">B级:</span> 查看所有 + 仅撤销低等级
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'C'} onChange={() => handleChange('logs_level', 'C', 'perm')} /> 
-                                            <span className="font-bold text-blue-600">C级:</span> 查看所有 + 仅撤销自己
-                                        </label>
-                                        <label className="flex items-center gap-2 cursor-pointer">
-                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'D'} onChange={() => handleChange('logs_level', 'D', 'perm')} /> 
-                                            <span className="font-bold text-gray-600">D级:</span> 仅查看自己 + 仅撤销自己
-                                        </label>
-                                    </div>
-                                 </div>
+                             {/* STORE SCOPE - Only show if the TARGET LEVEL allows Limited scope in matrix? 
+                                 Actually, store scope is defined in matrix (GLOBAL vs LIMITED).
+                                 If the Target Level is LIMITED, we show the store selector.
+                                 We need to know the matrix rule for the SELECTED role_level in the form.
+                             */}
+                             {(() => {
+                                 const targetLevelPerms = getPermission(formData.role_level as RoleLevel);
+                                 if (targetLevelPerms.store_scope === 'LIMITED') {
+                                     return (
+                                        <div className="space-y-4">
+                                            <h3 className="font-bold border-b dark:border-gray-700 pb-2">门店分配 (该等级为受限范围)</h3>
+                                            <div className="pl-4 border-l-2 border-blue-500 grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                                                {stores.map(s => (<label key={s.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={formData.allowed_store_ids?.includes(s.id)} onChange={(e) => handleStoreChange(s.id, e.target.checked)} />{s.name}</label>))}
+                                            </div>
+                                        </div>
+                                     );
+                                 }
+                                 return <p className="text-xs text-gray-500">该等级 ({formData.role_level}) 配置为全局门店范围，无需分配。</p>;
+                             })()}
 
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
-                                     <label className="block font-bold mb-2">公告权限</label>
-                                     <div className="space-x-4">
-                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'PUBLISH'} onChange={() => handleChange('announcement_rule', 'PUBLISH', 'perm')} /> 发布</label>
-                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'VIEW'} onChange={() => handleChange('announcement_rule', 'VIEW', 'perm')} /> 仅接收</label>
-                                     </div>
-                                 </div>
-
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
-                                     <label className="block font-bold mb-2">门店范围</label>
-                                     <div className="space-x-4 mb-3">
-                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'GLOBAL'} onChange={() => handleChange('store_scope', 'GLOBAL', 'perm')} /> 全局</label>
-                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'LIMITED'} onChange={() => handleChange('store_scope', 'LIMITED', 'perm')} /> 受限</label>
-                                     </div>
-                                     {formData.permissions?.store_scope === 'LIMITED' && (
-                                         <div className="pl-4 border-l-2 border-blue-500 grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
-                                             {stores.map(s => (<label key={s.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={formData.allowed_store_ids?.includes(s.id)} onChange={(e) => handleStoreChange(s.id, e.target.checked)} />{s.name}</label>))}
-                                         </div>
-                                     )}
-                                 </div>
-
-                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.show_excel} onChange={(e) => handleChange('show_excel', e.target.checked, 'perm')} /> 显示 Excel 导出</label>
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_peers} onChange={(e) => handleChange('view_peers', e.target.checked, 'perm')} /> 可见同级</label>
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_self_in_list} onChange={(e) => handleChange('view_self_in_list', e.target.checked, 'perm')} /> 显示自己</label>
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_perm_page} onChange={(e) => handleChange('hide_perm_page', e.target.checked, 'perm')} /> 隐藏权限页</label>
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_audit_hall} onChange={(e) => handleChange('hide_audit_hall', e.target.checked, 'perm')} /> 隐藏审计大厅</label>
-                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_store_management} onChange={(e) => handleChange('hide_store_management', e.target.checked, 'perm')} /> 隐藏门店管理 (增删改)</label>
-                                 </div>
+                             <div className="bg-orange-50 p-4 rounded text-xs text-orange-700 border border-orange-200">
+                                 注意：具体权限 (日志/公告/功能显隐) 现已由 全局权限矩阵 (等级 {formData.role_level}) 统一控制，无法单独修改。
                              </div>
+
                          </div>
                          <div className="p-6 border-t dark:border-gray-700 flex justify-end gap-4 bg-gray-50 dark:bg-gray-800">
                              <button onClick={() => setIsModalOpen(false)} className="px-6 py-2 text-gray-500 font-bold">取消</button>

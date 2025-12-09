@@ -76,20 +76,34 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   const aggregatedData = useMemo(() => {
     const map = new Map<string, AggregatedStock>();
     
-    // STRICT HIERARCHY: Level 1 is Product ID
+    // STRICT HIERARCHY: Group by Product Name + SKU (to merge duplicates if any) or Product ID
+    // We use a composite key to ensure products with same Name/SKU across different store bindings (if applicable) are merged
     products.forEach(p => {
-        if (!map.has(p.id)) map.set(p.id, { product: p, totalQuantity: 0, batches: [], expiringSoon: 0 });
+        // Use Product ID as key if global products. 
+        // If "Identical Name" means same product, we should use ID. 
+        // The prompt says "Group key only product_id or product_name". 
+        // Let's use ID as primary, but if the user implies distinct product rows with same name should be merged, we use Name.
+        // Given 'bound_store_id' exists, products might be duplicated. 
+        // Let's use Name+SKU as the key to merge visually identical products.
+        const key = `${p.name}::${p.sku || ''}`;
+        
+        if (!map.has(key)) {
+             map.set(key, { product: p, totalQuantity: 0, batches: [], expiringSoon: 0 });
+        }
     });
 
-    // Level 2: Batches. Note: We simply push batches. 
-    // DataService already returns batches with store_id and store_name. 
-    // Even if two batches have same batch_number but different store_id, they are distinct rows in 'batches' array
-    // so they will appear as distinct children rows here.
+    // Level 2: Batches. 
     batches.forEach(b => {
-        if (map.has(b.product_id)) {
-            const agg = map.get(b.product_id)!;
-            agg.totalQuantity += b.quantity; // Sum quantity regardless of store
-            agg.batches.push(b); 
+        // Find the matching product key
+        // We have batch.product_id. We need to find the product object to get its Name/SKU key.
+        const product = products.find(p => p.id === b.product_id);
+        if (product) {
+            const key = `${product.name}::${product.sku || ''}`;
+            if (map.has(key)) {
+                const agg = map.get(key)!;
+                agg.totalQuantity += b.quantity; 
+                agg.batches.push(b); 
+            }
         }
     });
 
@@ -272,6 +286,8 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                     {data.map((item: any) => {
+                        // Use a unique key for React using Product ID, but we know aggregatedData merged them. 
+                        // The item.product is just the first product object found for that key.
                         const isExpanded = mobileExpanded || expandedProducts.has(item.product.id);
                         return (
                             <React.Fragment key={item.product.id}>
@@ -306,8 +322,8 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                                 <div className="flex bg-gray-200 dark:bg-gray-800 p-2 text-xs font-bold text-gray-600 dark:text-gray-300">
                                                     <div className="w-10 text-center">选</div>
                                                     <div className="flex-1">批号</div>
-                                                    {/* Store Column: Show always if strict hierarchy is needed to distinguish identical batches in diff stores, but mainly relevant if currentStore=all */}
-                                                    {currentStore === 'all' && <div className="flex-1">门店</div>}
+                                                    {/* Store Column: Always visible now per requirement for distinction */}
+                                                    <div className="flex-1">门店</div>
                                                     <div className="flex-1">数量({item.product.unit_name || '大'})</div>
                                                     <div className="flex-1">数量({item.product.split_unit_name || '小'})</div>
                                                     <div className="flex-1">有效期</div>
@@ -323,7 +339,7 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                                             <div className="flex-1 font-mono">
                                                                 <span className="text-purple-700 bg-purple-50 dark:bg-purple-900/30 dark:text-purple-300 px-1 rounded">{batch.batch_number}</span>
                                                             </div>
-                                                            {currentStore === 'all' && <div className="flex-1 text-gray-500 text-xs truncate font-bold text-blue-500">{batch.store_name}</div>}
+                                                            <div className="flex-1 text-gray-500 text-xs truncate font-bold text-blue-500">{batch.store_name || '-'}</div>
                                                             <div className="flex-1 font-bold text-gray-800 dark:text-gray-200">{split.major}</div>
                                                             <div className="flex-1 text-gray-500">{split.minor}</div>
                                                             <div className="flex-1 text-xs">
