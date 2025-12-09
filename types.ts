@@ -85,12 +85,14 @@ export interface UserPermissions {
     only_view_config?: boolean;
 }
 
+export type RolePermissionMatrix = Record<RoleLevel, UserPermissions>;
+
 export type User = {
   id: string;
   username: string;
   password?: string; 
   role_level: RoleLevel; 
-  permissions: UserPermissions;
+  permissions: UserPermissions; // Deprecated in favor of Matrix, but kept for legacy/init
   allowed_store_ids: string[]; // For LIMITED scope
   is_archived?: boolean; // Soft Delete
   face_descriptor?: string | null; // Base64 of face image or descriptor

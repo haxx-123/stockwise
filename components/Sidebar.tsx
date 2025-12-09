@@ -3,6 +3,8 @@ import React, { useState, useEffect } from 'react';
 import { Icons } from './Icons';
 import { authService } from '../services/authService';
 import { UsernameBadge } from './UsernameBadge';
+import { SVIPBadge } from './SVIPBadge';
+import { usePermission } from '../contexts/PermissionContext';
 
 interface SidebarProps {
   currentPage: string;
@@ -15,7 +17,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const user = authService.getCurrentUser();
-  const perms = authService.permissions;
+  const { getPermissions } = usePermission();
+  const perms = getPermissions(user?.role_level || 9);
 
   useEffect(() => {
       const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -30,8 +33,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
     { id: 'logs', label: '操作日志', icon: Icons.Sparkles },
   ];
 
-  if (currentStore === 'all' && perms.can_see_system_logs) {
-      menuItems.push({ id: 'audit', label: '审计大厅', icon: Icons.AlertTriangle });
+  if (currentStore === 'all' && ['A','B','C'].includes(perms.logs_level)) {
+      if (!perms.hide_audit_hall) {
+          menuItems.push({ id: 'audit', label: '审计大厅', icon: Icons.AlertTriangle });
+      }
   }
 
   const NavButton = ({ item, isMobile }: any) => {
@@ -47,7 +52,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
         >
           <item.icon size={isMobile ? 24 : 20} />
           <span className={isMobile ? 'text-[10px]' : 'font-medium'}>{item.label}</span>
-          {/* Unread dot logic if needed for specific menu items */}
         </button>
     );
   };
@@ -63,7 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
                         <div className="absolute bottom-16 right-2 bg-white dark:bg-gray-900 border dark:border-gray-700 rounded-xl shadow-2xl p-2 w-40 flex flex-col gap-2 mb-2 animate-fade-in-up">
                             <button onClick={()=>{onNavigate(`settings-config`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">连接配置</button>
                             <button onClick={()=>{onNavigate(`settings-account`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">账户设置</button>
-                            {perms.has_perm_page && <button onClick={()=>{onNavigate(`settings-perms`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">权限设置</button>}
+                            {!perms.hide_perm_page && <button onClick={()=>{onNavigate(`settings-perms`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">权限设置</button>}
                             <button onClick={()=>{onNavigate(`settings-theme`); setSettingsOpen(false)}} className="text-left px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded text-xs dark:text-white">应用主题</button>
                         </div>
                      )}
@@ -106,7 +110,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
                 <div className="pl-12 space-y-1 mt-1 animate-fade-in border-l dark:border-gray-800 ml-6">
                     <button onClick={() => onNavigate('settings-config')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-config' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>连接配置</button>
                     <button onClick={() => onNavigate('settings-account')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-account' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>账户设置</button>
-                    {perms.has_perm_page && <button onClick={() => onNavigate('settings-perms')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-perms' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>权限设置</button>}
+                    {!perms.hide_perm_page && <button onClick={() => onNavigate('settings-perms')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-perms' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>权限设置</button>}
                     <button onClick={() => onNavigate('settings-theme')} className={`block w-full text-left py-2 text-sm ${currentPage === 'settings-theme' ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200'}`}>应用主题</button>
                 </div>
             )}
@@ -114,15 +118,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
       </nav>
 
       <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50">
-        <div className="flex items-center space-x-3 px-2 py-1">
-           <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-sm font-bold text-white shadow-md font-mono">
-             {String(user?.role_level).padStart(2,'0')}
-           </div>
-           <div className="overflow-hidden">
-             <UsernameBadge name={user?.username || ''} roleLevel={user?.role_level || 9} />
-             <p className="text-gray-500 dark:text-gray-400 text-xs truncate">Level {String(user?.role_level).padStart(2,'0')}</p>
-           </div>
-        </div>
+        {(user?.role_level === 0 || user?.role_level === 1) ? (
+            <div className="flex justify-center">
+                 <SVIPBadge name={user.username} roleLevel={user.role_level} size="md" />
+            </div>
+        ) : (
+            <div className="flex items-center space-x-3 px-2 py-1">
+               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-sm font-bold text-white shadow-md font-mono">
+                 {String(user?.role_level).padStart(2,'0')}
+               </div>
+               <div className="overflow-hidden">
+                 <UsernameBadge name={user?.username || ''} roleLevel={user?.role_level || 9} />
+                 <p className="text-gray-500 dark:text-gray-400 text-xs truncate">Level {String(user?.role_level).padStart(2,'0')}</p>
+               </div>
+            </div>
+        )}
       </div>
     </div>
   );

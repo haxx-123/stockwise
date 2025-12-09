@@ -3,7 +3,7 @@ import { User, RoleLevel, UserPermissions } from '../types';
 import { dataService } from './dataService';
 
 export const DEFAULT_PERMISSIONS: UserPermissions = {
-    logs_level: 'D', // Default to strict
+    logs_level: 'D', 
     announcement_rule: 'VIEW',
     store_scope: 'LIMITED',
     show_excel: false,
@@ -54,20 +54,19 @@ class AuthService {
     }
 
     async login(username: string, passwordInput: string): Promise<boolean> {
-        // 1. Check Hardcoded Super Admin
         if (username === '管理员' && passwordInput === 'ss631204') {
             this.currentUser = DEFAULT_ADMIN;
             this.setSession(this.currentUser);
             return true;
         }
 
-        // 2. Check DB Users
         try {
             const users = await dataService.getUsers(); 
             const user = users.find(u => u.username === username && u.password === passwordInput);
             
             if (user) {
-                // Ensure permissions object exists and has defaults for new fields
+                // Ensure permissions object exists for legacy support, 
+                // but application logic should prefer Global Matrix via Context.
                 user.permissions = { ...DEFAULT_PERMISSIONS, ...user.permissions };
                 
                 this.currentUser = user;
@@ -98,23 +97,8 @@ class AuthService {
         if (this.currentUser) dataService.logClientAction('LOGOUT', { username: this.currentUser.username });
         this.currentUser = null;
         sessionStorage.removeItem(this.SESSION_KEY);
-        sessionStorage.clear(); // Clear all session flags (e.g., popup viewed)
+        sessionStorage.clear(); 
         window.location.reload();
-    }
-
-    get permissions() {
-        const p = this.currentUser?.permissions || DEFAULT_PERMISSIONS;
-        return {
-            can_see_system_logs: p.logs_level === 'A' || p.logs_level === 'B' || p.logs_level === 'C',
-            can_manage_audit: !p.hide_audit_hall,
-            can_manage_stores: !p.hide_store_management,
-            can_publish_announcements: p.announcement_rule === 'PUBLISH',
-            is_global_store: p.store_scope === 'GLOBAL',
-            can_export_excel: p.show_excel,
-            has_perm_page: !p.hide_perm_page,
-            can_view_peers: p.view_peers,
-            only_view_config: p.only_view_config
-        };
     }
 }
 
