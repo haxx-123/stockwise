@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -36,7 +35,7 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT FOR USER-CENTRIC PERMISSIONS
     const sqlScript = `
--- STOCKWISE V3.2.0 USER-CENTRIC PERMISSIONS
+-- STOCKWISE V3.3.0 USER-CENTRIC PERMISSIONS & ARRAY SUPPORT
 -- SQL是/否较上一次发生更改: 是
 -- SQL是/否必须包含重置数据库: 否
 
@@ -55,6 +54,11 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='store_scope') THEN
         ALTER TABLE users ADD COLUMN store_scope text DEFAULT 'LIMITED';
     END IF;
+    -- Ensure allowed_store_ids exists as array
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='allowed_store_ids') THEN
+        ALTER TABLE users ADD COLUMN allowed_store_ids text[] DEFAULT '{}';
+    END IF;
+
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='show_excel') THEN
         ALTER TABLE users ADD COLUMN show_excel boolean DEFAULT false;
     END IF;
@@ -155,6 +159,166 @@ END $$;
     return null;
 };
 
+// --- ISOLATED PERMISSION MATRIX COMPONENT ---
+// Handles Optimistic UI + Direct DB Updates
+const PermissionMatrix = ({ user, stores, onLocalChange }: { user: Partial<User>, stores: Store[], onLocalChange?: (field: string, val: any) => void }) => {
+    // Local State for Immediate UI Feedback (Optimistic UI)
+    const [localPerms, setLocalPerms] = useState<Partial<User>>(user);
+    const isEditing = !!user.id; // If ID exists, we are editing an existing user (Direct DB Mode)
+
+    // Sync when user prop changes (e.g. switching users)
+    useEffect(() => {
+        setLocalPerms(user);
+    }, [user]);
+
+    const handleUpdate = async (field: keyof User, value: any) => {
+        // 1. Optimistic Update (Immediate UI Switch)
+        const prevState = { ...localPerms };
+        const newState = { ...localPerms, [field]: value };
+        setLocalPerms(newState);
+
+        console.log(`[PermissionMatrix] Toggling ${field} to`, value);
+
+        // 2. Direct DB Write (if editing)
+        if (isEditing && user.id) {
+            try {
+                // Fire update immediately
+                await dataService.updateUser(user.id, { [field]: value });
+                // If success, do nothing (state already updated)
+            } catch (error: any) {
+                console.error("DB Update Failed:", error);
+                // Revert UI on failure
+                setLocalPerms(prevState);
+                alert(`权限更新失败: ${error.message}`);
+            }
+        } else {
+            // 3. New User Mode: Bubble up to parent form state
+            if (onLocalChange) onLocalChange(field as string, value);
+        }
+    };
+
+    return (
+        <div className="space-y-4">
+            <h3 className="font-bold text-lg dark:text-white border-b pb-2 dark:border-gray-700 flex justify-between items-center">
+                <span>权限矩阵配置</span>
+                <span className="text-xs font-normal text-gray-500">{isEditing ? '实时保存' : '保存需点击底部按钮'}</span>
+            </h3>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {/* Card 1: Log Permissions */}
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
+                    <h3 className="font-bold dark:text-white mb-3">日志权限 (Log Level)</h3>
+                    <div className="space-y-2">
+                        {[
+                            { val: 'A', label: 'A级: 查看所有 + 任意撤销 (最高)' },
+                            { val: 'B', label: 'B级: 查看所有 + 仅撤销低等级' },
+                            { val: 'C', label: 'C级: 查看所有 + 仅撤销自己' },
+                            { val: 'D', label: 'D级: 仅查看自己 + 仅撤销自己' },
+                        ].map(opt => (
+                            <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded transition-colors ${localPerms.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800' : 'hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                                <input 
+                                   type="radio" 
+                                   name="logs_level" 
+                                   checked={localPerms.logs_level === opt.val} 
+                                   onChange={() => handleUpdate('logs_level', opt.val)}
+                                   className="accent-blue-500"
+                                />
+                                <span className={`text-sm ${localPerms.logs_level === opt.val ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400'}`}>{opt.label}</span>
+                            </label>
+                        ))}
+                    </div>
+                </div>
+
+                {/* Card 2: Functional Scope */}
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 space-y-6">
+                    <div>
+                        <h3 className="font-bold dark:text-white mb-3">公告权限</h3>
+                        <div className="flex gap-4">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" checked={localPerms.announcement_rule === 'PUBLISH'} onChange={() => handleUpdate('announcement_rule', 'PUBLISH')} className="accent-blue-500"/>
+                                <span className="text-sm dark:text-gray-300">发布 & 接收</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" checked={localPerms.announcement_rule === 'VIEW'} onChange={() => handleUpdate('announcement_rule', 'VIEW')} className="accent-blue-500"/>
+                                <span className="text-sm dark:text-gray-300">仅接收</span>
+                            </label>
+                        </div>
+                    </div>
+                    <div>
+                        <h3 className="font-bold dark:text-white mb-3">门店范围策略</h3>
+                        <div className="flex gap-4 mb-2 items-center">
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" checked={localPerms.store_scope === 'GLOBAL'} onChange={() => handleUpdate('store_scope', 'GLOBAL')} className="accent-blue-500"/>
+                                <span className="text-sm dark:text-gray-300">全局 (Global)</span>
+                            </label>
+                            <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="radio" checked={localPerms.store_scope === 'LIMITED'} onChange={() => handleUpdate('store_scope', 'LIMITED')} className="accent-blue-500"/>
+                                <span className="text-sm dark:text-gray-300">受限</span>
+                            </label>
+                        </div>
+                        {/* Store Selector shows up when LIMITED is selected */}
+                        {localPerms.store_scope === 'LIMITED' && (
+                            <div className="border rounded dark:border-gray-600 p-3 bg-white dark:bg-gray-700 animate-fade-in mt-2 relative">
+                                <div className="absolute -top-2 left-20 w-3 h-3 bg-white dark:bg-gray-700 border-t border-l dark:border-gray-600 transform rotate-45"></div>
+                                <h3 className="font-bold text-xs mb-2 dark:text-gray-300 text-blue-600">选择可见门店 (多选)</h3>
+                                <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto custom-scrollbar">
+                                    {stores.map(s => (
+                                        <label key={s.id} className="flex items-center gap-2 text-xs dark:text-gray-300 cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-600 p-1 rounded">
+                                            <input 
+                                               type="checkbox" 
+                                               checked={localPerms.allowed_store_ids?.includes(s.id)}
+                                               onChange={e => {
+                                                   const set = new Set<string>(localPerms.allowed_store_ids || []);
+                                                   if(e.target.checked) set.add(s.id); else set.delete(s.id);
+                                                   handleUpdate('allowed_store_ids', Array.from(set));
+                                               }}
+                                               className="accent-blue-500"
+                                            />
+                                            {s.name}
+                                        </label>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+
+                {/* Card 3: Feature Flags */}
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
+                    <h3 className="font-bold dark:text-white mb-3">功能开关</h3>
+                    <div className="grid grid-cols-1 gap-3">
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                            <input type="checkbox" checked={localPerms.show_excel} onChange={e => handleUpdate('show_excel', e.target.checked)} className="w-4 h-4 accent-blue-500 rounded"/>
+                            <span className="text-sm dark:text-gray-300">显示 Excel 导出</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                            <input type="checkbox" checked={localPerms.view_self_in_list} onChange={e => handleUpdate('view_self_in_list', e.target.checked)} className="w-4 h-4 accent-blue-500 rounded"/>
+                            <span className="text-sm dark:text-gray-300">列表显示自己 (Show Self)</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                            <input type="checkbox" checked={localPerms.view_peers} onChange={e => handleUpdate('view_peers', e.target.checked)} className="w-4 h-4 accent-blue-500 rounded"/>
+                            <span className="text-sm dark:text-gray-300">可见同级 (Visible Peers)</span>
+                        </label>
+                        <div className="h-px bg-gray-200 dark:bg-gray-700 my-1"></div>
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                            <input type="checkbox" checked={localPerms.hide_perm_page} onChange={e => handleUpdate('hide_perm_page', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
+                            <span className="text-sm dark:text-gray-300">隐藏权限页</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                            <input type="checkbox" checked={localPerms.hide_audit_hall} onChange={e => handleUpdate('hide_audit_hall', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
+                            <span className="text-sm dark:text-gray-300">隐藏审计大厅</span>
+                        </label>
+                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
+                            <input type="checkbox" checked={localPerms.hide_store_management} onChange={e => handleUpdate('hide_store_management', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
+                            <span className="text-sm dark:text-gray-300">隐藏门店管理 (增删改)</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const PermissionsSettings = () => {
     const currentUser = authService.getCurrentUser();
     const { currentUserPermissions } = usePermissionContext(); 
@@ -213,12 +377,10 @@ const PermissionsSettings = () => {
                  return;
             }
             setEditingUser(user);
-            // Clone user data into form, ensuring permissions are flattened or present
-            // The User type now has flat fields, so direct copy works mostly
-            // We use the flat fields for the form state
+            // Clone user data into form
             setUserFormData({
                 ...user,
-                // Ensure defaults if null
+                // Ensure defaults if null (DB columns usually null on old records)
                 logs_level: user.logs_level || 'D',
                 announcement_rule: user.announcement_rule || 'VIEW',
                 store_scope: user.store_scope || 'LIMITED',
@@ -266,14 +428,23 @@ const PermissionsSettings = () => {
              // Editing Existing
              // Cannot Promote (decrease level number below original)
              if (inputLevel < editingUser.role_level) return alert("权限等级只能往低修改 (数字变大，不可往高修改！");
-        } 
+             
+             // Note: Permissions are saved directly by Matrix component.
+             // Here we only save Basic Info (Username/Password/Role).
+             const basicUpdates: Partial<User> = {
+                 username: userFormData.username,
+                 password: userFormData.password,
+                 role_level: userFormData.role_level
+             };
+             await dataService.updateUser(editingUser.id, basicUpdates);
+        } else {
+             // Creating New
+             // Here we save EVERYTHING including permissions from formData
+             await dataService.createUser(userFormData as any);
+        }
 
-        try {
-            if (editingUser) await dataService.updateUser(editingUser.id, userFormData);
-            else await dataService.createUser(userFormData as any);
-            setIsUserModalOpen(false);
-            loadUsers();
-        } catch(e: any) { alert(e.message); }
+        setIsUserModalOpen(false);
+        loadUsers();
     };
 
     const handleDeleteUser = async (u: User) => {
@@ -281,9 +452,14 @@ const PermissionsSettings = () => {
         if(confirm("确定删除该用户？(软删除)")) { await dataService.deleteUser(u.id); loadUsers(); }
     };
 
-    // Helper to update form data
+    // Helper to update form data (for Basic Info inputs)
     const updateForm = (updates: Partial<User>) => {
         setUserFormData(prev => ({ ...prev, ...updates }));
+    };
+
+    // Callback for New User permissions (bubbles up from Matrix)
+    const handleNewUserPermissionChange = (field: string, val: any) => {
+        setUserFormData(prev => ({ ...prev, [field]: val }));
     };
 
     // -- Render --
@@ -370,124 +546,19 @@ const PermissionsSettings = () => {
                                  </div>
                              </div>
 
-                             {/* Permission Matrix Embedded */}
-                             <div className="space-y-4">
-                                 <h3 className="font-bold text-lg dark:text-white border-b pb-2 dark:border-gray-700">权限矩阵 (单用户配置)</h3>
-                                 
-                                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                                     {/* Card 1: Log Permissions */}
-                                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
-                                         <h3 className="font-bold dark:text-white mb-3">日志权限 (Log Level)</h3>
-                                         <div className="space-y-2">
-                                             {[
-                                                 { val: 'A', label: 'A级: 查看所有 + 任意撤销 (最高)' },
-                                                 { val: 'B', label: 'B级: 查看所有 + 仅撤销低等级' },
-                                                 { val: 'C', label: 'C级: 查看所有 + 仅撤销自己' },
-                                                 { val: 'D', label: 'D级: 仅查看自己 + 仅撤销自己' },
-                                             ].map(opt => (
-                                                 <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded ${userFormData.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800' : ''}`}>
-                                                     <input 
-                                                        type="radio" 
-                                                        name="logs_level" 
-                                                        checked={userFormData.logs_level === opt.val} 
-                                                        onChange={() => updateForm({ logs_level: opt.val as any })}
-                                                        className="accent-blue-500"
-                                                     />
-                                                     <span className={`text-sm ${userFormData.logs_level === opt.val ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400'}`}>{opt.label}</span>
-                                                 </label>
-                                             ))}
-                                         </div>
-                                     </div>
-
-                                     {/* Card 2: Functional Scope */}
-                                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 space-y-6">
-                                         <div>
-                                             <h3 className="font-bold dark:text-white mb-3">公告权限</h3>
-                                             <div className="flex gap-4">
-                                                 <label className="flex items-center gap-2 cursor-pointer">
-                                                     <input type="radio" checked={userFormData.announcement_rule === 'PUBLISH'} onChange={() => updateForm({ announcement_rule: 'PUBLISH' })} className="accent-blue-500"/>
-                                                     <span className="text-sm dark:text-gray-300">发布 & 接收</span>
-                                                 </label>
-                                                 <label className="flex items-center gap-2 cursor-pointer">
-                                                     <input type="radio" checked={userFormData.announcement_rule === 'VIEW'} onChange={() => updateForm({ announcement_rule: 'VIEW' })} className="accent-blue-500"/>
-                                                     <span className="text-sm dark:text-gray-300">仅接收</span>
-                                                 </label>
-                                             </div>
-                                         </div>
-                                         <div>
-                                             <h3 className="font-bold dark:text-white mb-3">门店范围策略</h3>
-                                             <div className="flex gap-4 mb-2">
-                                                 <label className="flex items-center gap-2 cursor-pointer">
-                                                     <input type="radio" checked={userFormData.store_scope === 'GLOBAL'} onChange={() => updateForm({ store_scope: 'GLOBAL' })} className="accent-blue-500"/>
-                                                     <span className="text-sm dark:text-gray-300">全局 (Global)</span>
-                                                 </label>
-                                                 <label className="flex items-center gap-2 cursor-pointer">
-                                                     <input type="radio" checked={userFormData.store_scope === 'LIMITED'} onChange={() => updateForm({ store_scope: 'LIMITED' })} className="accent-blue-500"/>
-                                                     <span className="text-sm dark:text-gray-300">受限 (User Specified)</span>
-                                                 </label>
-                                             </div>
-                                             {/* Store Selector shows up when LIMITED is selected */}
-                                             {userFormData.store_scope === 'LIMITED' && (
-                                                 <div className="border rounded dark:border-gray-600 p-3 bg-white dark:bg-gray-700 animate-fade-in">
-                                                     <h3 className="font-bold text-xs mb-2 dark:text-gray-300">选择可见门店</h3>
-                                                     <div className="grid grid-cols-1 gap-2 max-h-32 overflow-y-auto custom-scrollbar">
-                                                         {stores.map(s => (
-                                                             <label key={s.id} className="flex items-center gap-2 text-xs dark:text-gray-300">
-                                                                 <input 
-                                                                    type="checkbox" 
-                                                                    checked={userFormData.allowed_store_ids?.includes(s.id)}
-                                                                    onChange={e => {
-                                                                        const set = new Set<string>(userFormData.allowed_store_ids || []);
-                                                                        if(e.target.checked) set.add(s.id); else set.delete(s.id);
-                                                                        updateForm({allowed_store_ids: Array.from(set)});
-                                                                    }}
-                                                                 />
-                                                                 {s.name}
-                                                             </label>
-                                                         ))}
-                                                     </div>
-                                                 </div>
-                                             )}
-                                         </div>
-                                     </div>
-
-                                     {/* Card 3: Feature Flags */}
-                                     <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
-                                         <h3 className="font-bold dark:text-white mb-3">功能开关</h3>
-                                         <div className="grid grid-cols-1 gap-3">
-                                             <label className="flex items-center gap-2 cursor-pointer">
-                                                 <input type="checkbox" checked={userFormData.show_excel} onChange={e => updateForm({ show_excel: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
-                                                 <span className="text-sm dark:text-gray-300">显示 Excel 导出</span>
-                                             </label>
-                                             <label className="flex items-center gap-2 cursor-pointer">
-                                                 <input type="checkbox" checked={userFormData.view_self_in_list} onChange={e => updateForm({ view_self_in_list: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
-                                                 <span className="text-sm dark:text-gray-300">列表显示自己 (Show Self)</span>
-                                             </label>
-                                             <label className="flex items-center gap-2 cursor-pointer">
-                                                 <input type="checkbox" checked={userFormData.view_peers} onChange={e => updateForm({ view_peers: e.target.checked })} className="w-4 h-4 accent-blue-500 rounded"/>
-                                                 <span className="text-sm dark:text-gray-300">可见同级 (Visible Peers)</span>
-                                             </label>
-                                             <div className="h-px bg-gray-200 dark:bg-gray-700 my-1"></div>
-                                             <label className="flex items-center gap-2 cursor-pointer">
-                                                 <input type="checkbox" checked={userFormData.hide_perm_page} onChange={e => updateForm({ hide_perm_page: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
-                                                 <span className="text-sm dark:text-gray-300">隐藏权限页</span>
-                                             </label>
-                                             <label className="flex items-center gap-2 cursor-pointer">
-                                                 <input type="checkbox" checked={userFormData.hide_audit_hall} onChange={e => updateForm({ hide_audit_hall: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
-                                                 <span className="text-sm dark:text-gray-300">隐藏审计大厅</span>
-                                             </label>
-                                             <label className="flex items-center gap-2 cursor-pointer">
-                                                 <input type="checkbox" checked={userFormData.hide_store_management} onChange={e => updateForm({ hide_store_management: e.target.checked })} className="w-4 h-4 accent-red-500 rounded"/>
-                                                 <span className="text-sm dark:text-gray-300">隐藏门店管理 (增删改)</span>
-                                             </label>
-                                         </div>
-                                     </div>
-                                 </div>
-                             </div>
+                             {/* Permission Matrix Embedded Component */}
+                             <PermissionMatrix 
+                                 user={userFormData} 
+                                 stores={stores} 
+                                 onLocalChange={handleNewUserPermissionChange} 
+                             />
+                             
                          </div>
                          <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex justify-end gap-3 rounded-b-xl shrink-0">
                              <button onClick={() => setIsUserModalOpen(false)} className="px-4 py-2 text-gray-500 font-bold">取消</button>
-                             <button onClick={handleSaveUser} className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow">保存用户配置</button>
+                             <button onClick={handleSaveUser} className="px-6 py-2 bg-blue-600 text-white rounded font-bold hover:bg-blue-700 shadow">
+                                 {editingUser ? '保存基本信息' : '创建用户'}
+                             </button>
                          </div>
                      </div>
                  </div>
@@ -497,7 +568,6 @@ const PermissionsSettings = () => {
 };
 
 const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
-    // ... (Existing FaceSetup implementation kept same)
     const videoRef = useRef<HTMLVideoElement>(null);
     const [status, setStatus] = useState('初始化相机...');
     useEffect(() => {
@@ -530,7 +600,6 @@ const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
 };
 
 const AccountSettings = () => {
-    // ... (Existing AccountSettings implementation kept same but ensuring imports work)
     const user = authService.getCurrentUser();
     const [form, setForm] = useState({ username: '', password: '' });
     const [showPass, setShowPass] = useState(false);
@@ -573,4 +642,3 @@ const AccountSettings = () => {
         </div>
     );
 };
-
