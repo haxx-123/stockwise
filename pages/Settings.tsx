@@ -1,5 +1,4 @@
 
-
 import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -161,75 +160,91 @@ END $$;
 };
 
 // --- ISOLATED PERMISSION MATRIX COMPONENT ---
-// Handles Optimistic UI + Direct DB Updates + Fresh Fetch
-const PermissionMatrix = ({ userId, initialUser, stores, onLocalChange }: { userId?: string, initialUser: Partial<User>, stores: Store[], onLocalChange?: (field: string, val: any) => void }) => {
-    // Local State for Immediate UI Feedback (Optimistic UI)
-    const [localPerms, setLocalPerms] = useState<Partial<User>>(initialUser);
+// Re-engineered for Strict Independence and Fresh Data
+interface PermissionMatrixProps {
+    userId?: string;
+    initialUser: Partial<User>;
+    stores: Store[];
+    onLocalChange?: (field: string, val: any) => void;
+}
+
+const PermissionMatrix: React.FC<PermissionMatrixProps> = ({ userId, initialUser, stores, onLocalChange }) => {
+    // CRITICAL: We initialize with empty if userId is present to force waiting for fresh fetch
+    // This prevents "stale data" from the list view leaking into the edit view
+    const [localPerms, setLocalPerms] = useState<Partial<User>>(userId ? {} : initialUser);
     const [loading, setLoading] = useState(!!userId);
 
-    // FETCH FRESH DATA ON MOUNT IF EDITING
+    // FETCH FRESH DATA ON MOUNT
     useEffect(() => {
+        let active = true;
         if (userId) {
             setLoading(true);
+            // DIRECT DB FETCH: Bypass any parent state
             dataService.getUser(userId).then(freshUser => {
-                if (freshUser) {
-                    console.log(`[PermissionMatrix] Fetched fresh data for ${userId}`, freshUser);
-                    setLocalPerms(freshUser);
+                if (active) {
+                    if (freshUser) {
+                        setLocalPerms(freshUser);
+                    }
+                    setLoading(false);
                 }
-                setLoading(false);
+            }).catch(err => {
+                console.error("Fetch Perms Error", err);
+                if (active) setLoading(false);
             });
         } else {
-            // Creation mode: sync from props if initialUser changes
+             // New User Mode: Use props
              setLocalPerms(initialUser);
              setLoading(false);
         }
+        return () => { active = false; };
     }, [userId]); 
 
-    // IMPORTANT: In Edit Mode (userId exists), we DO NOT sync localPerms from initialUser prop updates.
-    // This prevents the parent list (which might be stale or updating slowly via realtime)
-    // from overwriting our fresh, optimistic local state.
-
     const handleUpdate = async (field: keyof User, value: any) => {
-        // 1. Optimistic Update (Immediate UI Switch)
-        const prevState = { ...localPerms };
+        // 1. Optimistic Update (Immediate UI Switch - "Refuse False Death")
+        // We update local state instantly so the toggle moves immediately
         const newState = { ...localPerms, [field]: value };
         setLocalPerms(newState);
 
-        console.log(`[PermissionMatrix] Toggling ${field} to`, value);
-
-        // 2. Direct DB Write (if editing)
+        // 2. Direct DB Write (Background Sync)
         if (userId) {
             try {
-                // Fire update immediately
+                // We fire and forget the promise to keep UI snappy, but we handle errors
                 await dataService.updateUser(userId, { [field]: value });
-                // If success, do nothing (state already updated)
+                console.log(`[PermissionMatrix] Synced ${field} for user ${userId}`);
             } catch (error: any) {
                 console.error("DB Update Failed:", error);
-                // Revert UI on failure
-                setLocalPerms(prevState);
-                alert(`权限更新失败: ${error.message}`);
+                alert(`权限保存失败，请重试: ${error.message}`);
+                // Revert state on error (optional, but good for consistency)
+                setLocalPerms(prev => ({ ...prev, [field]: localPerms[field] }));
             }
         } else {
-            // 3. New User Mode: Bubble up to parent form state
+            // 3. New User Mode: Bubble up to parent form
             if (onLocalChange) onLocalChange(field as string, value);
         }
     };
 
     if (loading) {
-        return <div className="p-8 text-center text-gray-500 animate-pulse">正在获取最新权限配置...</div>;
+        return (
+            <div className="p-12 flex flex-col items-center justify-center space-y-4 text-gray-500 bg-gray-50 dark:bg-gray-800/50 rounded-lg border-2 border-dashed border-gray-200 dark:border-gray-700">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="text-sm font-medium">正在同步最新权限配置...</div>
+            </div>
+        );
     }
 
     return (
-        <div className="space-y-4">
+        <div className="space-y-4 animate-fade-in">
             <h3 className="font-bold text-lg dark:text-white border-b pb-2 dark:border-gray-700 flex justify-between items-center">
                 <span>权限矩阵配置</span>
-                <span className="text-xs font-normal text-gray-500">{userId ? '实时保存 (独立模式)' : '保存需点击底部按钮'}</span>
+                <span className="text-xs font-normal text-green-600 bg-green-50 dark:bg-green-900/30 px-2 py-1 rounded">
+                    {userId ? '● 实时独立保存' : '● 保存需点击底部按钮'}
+                </span>
             </h3>
             
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {/* Card 1: Log Permissions */}
-                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
-                    <h3 className="font-bold dark:text-white mb-3">日志权限 (Log Level)</h3>
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 shadow-sm">
+                    <h3 className="font-bold dark:text-white mb-3 flex items-center gap-2"><Icons.Sparkles size={16}/> 日志权限 (Log Level)</h3>
                     <div className="space-y-2">
                         {[
                             { val: 'A', label: 'A级: 查看所有 + 任意撤销 (最高)' },
@@ -237,32 +252,38 @@ const PermissionMatrix = ({ userId, initialUser, stores, onLocalChange }: { user
                             { val: 'C', label: 'C级: 查看所有 + 仅撤销自己' },
                             { val: 'D', label: 'D级: 仅查看自己 + 仅撤销自己' },
                         ].map(opt => (
-                            <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded transition-colors ${localPerms.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800' : 'hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                            <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded transition-all duration-200 ${localPerms.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 shadow-sm transform scale-[1.02]' : 'hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                                 <input 
                                    type="radio" 
                                    name="logs_level" 
                                    checked={localPerms.logs_level === opt.val} 
                                    onChange={() => handleUpdate('logs_level', opt.val)}
-                                   className="accent-blue-500"
+                                   className="accent-blue-500 w-4 h-4"
                                 />
-                                <span className={`text-sm ${localPerms.logs_level === opt.val ? 'text-blue-600 dark:text-blue-400 font-bold' : 'text-gray-600 dark:text-gray-400'}`}>{opt.label}</span>
+                                <span className={`text-sm ${localPerms.logs_level === opt.val ? 'text-blue-700 dark:text-blue-300 font-bold' : 'text-gray-600 dark:text-gray-400'}`}>{opt.label}</span>
                             </label>
                         ))}
                     </div>
                 </div>
 
                 {/* Card 2: Functional Scope */}
-                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 space-y-6">
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 shadow-sm space-y-6">
                     <div>
                         <h3 className="font-bold dark:text-white mb-3">公告权限</h3>
                         <div className="flex gap-4">
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="radio" checked={localPerms.announcement_rule === 'PUBLISH'} onChange={() => handleUpdate('announcement_rule', 'PUBLISH')} className="accent-blue-500"/>
-                                <span className="text-sm dark:text-gray-300">发布 & 接收</span>
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${localPerms.announcement_rule === 'PUBLISH' ? 'border-blue-500 bg-blue-500' : 'border-gray-400'}`}>
+                                    {localPerms.announcement_rule === 'PUBLISH' && <div className="w-2 h-2 bg-white rounded-full"></div>}
+                                </div>
+                                <input type="radio" className="hidden" checked={localPerms.announcement_rule === 'PUBLISH'} onChange={() => handleUpdate('announcement_rule', 'PUBLISH')} />
+                                <span className={`text-sm ${localPerms.announcement_rule === 'PUBLISH' ? 'font-bold text-blue-600 dark:text-blue-400' : 'dark:text-gray-300'}`}>发布 & 接收</span>
                             </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
-                                <input type="radio" checked={localPerms.announcement_rule === 'VIEW'} onChange={() => handleUpdate('announcement_rule', 'VIEW')} className="accent-blue-500"/>
-                                <span className="text-sm dark:text-gray-300">仅接收</span>
+                            <label className="flex items-center gap-2 cursor-pointer group">
+                                <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${localPerms.announcement_rule === 'VIEW' ? 'border-blue-500 bg-blue-500' : 'border-gray-400'}`}>
+                                    {localPerms.announcement_rule === 'VIEW' && <div className="w-2 h-2 bg-white rounded-full"></div>}
+                                </div>
+                                <input type="radio" className="hidden" checked={localPerms.announcement_rule === 'VIEW'} onChange={() => handleUpdate('announcement_rule', 'VIEW')} />
+                                <span className={`text-sm ${localPerms.announcement_rule === 'VIEW' ? 'font-bold text-blue-600 dark:text-blue-400' : 'dark:text-gray-300'}`}>仅接收</span>
                             </label>
                         </div>
                     </div>
@@ -294,7 +315,7 @@ const PermissionMatrix = ({ userId, initialUser, stores, onLocalChange }: { user
                                                    if(e.target.checked) set.add(s.id); else set.delete(s.id);
                                                    handleUpdate('allowed_store_ids', Array.from(set));
                                                }}
-                                               className="accent-blue-500"
+                                               className="accent-blue-500 rounded"
                                             />
                                             {s.name}
                                         </label>
@@ -306,44 +327,37 @@ const PermissionMatrix = ({ userId, initialUser, stores, onLocalChange }: { user
                 </div>
 
                 {/* Card 3: Feature Flags */}
-                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700">
+                <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 shadow-sm">
                     <h3 className="font-bold dark:text-white mb-3">功能开关</h3>
                     <div className="grid grid-cols-1 gap-3">
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
-                            <input type="checkbox" checked={localPerms.show_excel} onChange={e => handleUpdate('show_excel', e.target.checked)} className="w-4 h-4 accent-blue-500 rounded"/>
-                            <span className="text-sm dark:text-gray-300">显示 Excel 导出</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
-                            <input type="checkbox" checked={localPerms.view_self_in_list} onChange={e => handleUpdate('view_self_in_list', e.target.checked)} className="w-4 h-4 accent-blue-500 rounded"/>
-                            <span className="text-sm dark:text-gray-300">列表显示自己 (Show Self)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
-                            <input type="checkbox" checked={localPerms.view_peers} onChange={e => handleUpdate('view_peers', e.target.checked)} className="w-4 h-4 accent-blue-500 rounded"/>
-                            <span className="text-sm dark:text-gray-300">可见同级 (Visible Peers)</span>
-                        </label>
+                        <ToggleRow label="显示 Excel 导出" checked={!!localPerms.show_excel} onChange={(v) => handleUpdate('show_excel', v)} />
+                        <ToggleRow label="列表显示自己 (Show Self)" checked={!!localPerms.view_self_in_list} onChange={(v) => handleUpdate('view_self_in_list', v)} />
+                        <ToggleRow label="可见同级 (Visible Peers)" checked={!!localPerms.view_peers} onChange={(v) => handleUpdate('view_peers', v)} />
+                        
                         <div className="h-px bg-gray-200 dark:bg-gray-700 my-1"></div>
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
-                            <input type="checkbox" checked={localPerms.hide_perm_page} onChange={e => handleUpdate('hide_perm_page', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
-                            <span className="text-sm dark:text-gray-300">隐藏权限页</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
-                            <input type="checkbox" checked={localPerms.hide_audit_hall} onChange={e => handleUpdate('hide_audit_hall', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
-                            <span className="text-sm dark:text-gray-300">隐藏审计大厅</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
-                            <input type="checkbox" checked={localPerms.hide_store_management} onChange={e => handleUpdate('hide_store_management', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
-                            <span className="text-sm dark:text-gray-300">隐藏门店管理 (增删改)</span>
-                        </label>
-                        <label className="flex items-center gap-2 cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-700 p-1 rounded transition-colors">
-                            <input type="checkbox" checked={localPerms.only_view_config} onChange={e => handleUpdate('only_view_config', e.target.checked)} className="w-4 h-4 accent-red-500 rounded"/>
-                            <span className="text-sm dark:text-gray-300">仅显示配置页</span>
-                        </label>
+                        
+                        <ToggleRow label="隐藏权限页 (Safety)" checked={!!localPerms.hide_perm_page} onChange={(v) => handleUpdate('hide_perm_page', v)} danger />
+                        <ToggleRow label="隐藏审计大厅 (Safety)" checked={!!localPerms.hide_audit_hall} onChange={(v) => handleUpdate('hide_audit_hall', v)} danger />
+                        <ToggleRow label="隐藏门店管理 (增删改)" checked={!!localPerms.hide_store_management} onChange={(v) => handleUpdate('hide_store_management', v)} danger />
+                        <ToggleRow label="仅显示配置页 (锁定)" checked={!!localPerms.only_view_config} onChange={(v) => handleUpdate('only_view_config', v)} danger />
                     </div>
                 </div>
             </div>
         </div>
     );
 };
+
+const ToggleRow = ({ label, checked, onChange, danger }: any) => (
+    <div 
+        onClick={() => onChange(!checked)}
+        className={`flex items-center justify-between p-2 rounded cursor-pointer transition-colors ${checked ? (danger ? 'bg-red-50 dark:bg-red-900/20' : 'bg-blue-50 dark:bg-blue-900/20') : 'hover:bg-gray-200 dark:hover:bg-gray-700'}`}
+    >
+        <span className={`text-sm ${danger ? (checked ? 'text-red-600 font-bold' : 'text-gray-600 dark:text-gray-400') : (checked ? 'text-blue-700 dark:text-blue-300 font-bold' : 'text-gray-600 dark:text-gray-400')}`}>{label}</span>
+        <div className={`w-10 h-5 rounded-full relative transition-colors ${checked ? (danger ? 'bg-red-500' : 'bg-blue-500') : 'bg-gray-300 dark:bg-gray-600'}`}>
+            <div className={`absolute top-0.5 w-4 h-4 bg-white rounded-full shadow-sm transition-transform duration-200 ${checked ? 'left-5.5' : 'left-0.5'}`}></div>
+        </div>
+    </div>
+);
 
 const PermissionsSettings = () => {
     const currentUser = authService.getCurrentUser();
@@ -403,10 +417,11 @@ const PermissionsSettings = () => {
                  return;
             }
             setEditingUser(user);
-            // Clone user data into form
+            // Clone user data into form - BUT PermissionMatrix will fetch its own fresh data for perms
+            // We only need basic info here
             setUserFormData({
                 ...user,
-                // Ensure defaults if null (DB columns usually null on old records)
+                // Defaults for new fields in case of null, mainly for the parent form state if needed
                 logs_level: user.logs_level || 'D',
                 announcement_rule: user.announcement_rule || 'VIEW',
                 store_scope: user.store_scope || 'LIMITED',
@@ -455,7 +470,7 @@ const PermissionsSettings = () => {
              // Cannot Promote (decrease level number below original)
              if (inputLevel < editingUser.role_level) return alert("权限等级只能往低修改 (数字变大，不可往高修改！");
              
-             // Note: Permissions are saved directly by Matrix component.
+             // Note: Permissions are saved directly by Matrix component in real-time.
              // Here we only save Basic Info (Username/Password/Role).
              const basicUpdates: Partial<User> = {
                  username: userFormData.username,
@@ -465,7 +480,7 @@ const PermissionsSettings = () => {
              await dataService.updateUser(editingUser.id, basicUpdates);
         } else {
              // Creating New
-             // Here we save EVERYTHING including permissions from formData
+             // Here we save EVERYTHING including permissions from formData because new users don't have an ID yet
              await dataService.createUser(userFormData as any);
         }
 
@@ -574,9 +589,11 @@ const PermissionsSettings = () => {
                              </div>
 
                              {/* Permission Matrix Embedded Component */}
+                             {/* KEY PROP is Vital here to force remount when switching users */}
                              <PermissionMatrix 
+                                 key={editingUser ? editingUser.id : 'new_user'}
                                  userId={editingUser?.id}
-                                 initialUser={userFormData} 
+                                 initialUser={editingUser ? {} : userFormData} // Pass empty if editing to force fetch
                                  stores={stores} 
                                  onLocalChange={handleNewUserPermissionChange} 
                              />
