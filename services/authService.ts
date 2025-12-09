@@ -3,7 +3,8 @@ import { User, RoleLevel, UserPermissions } from '../types';
 import { dataService } from './dataService';
 
 export const DEFAULT_PERMISSIONS: UserPermissions = {
-    logs_level: 'D', 
+    role_level: 9,
+    logs_level: 'D', // Default to strict
     announcement_rule: 'VIEW',
     store_scope: 'LIMITED',
     show_excel: false,
@@ -22,6 +23,7 @@ export const DEFAULT_ADMIN: User = {
     password: 'password', 
     role_level: 0,
     permissions: {
+        role_level: 0,
         logs_level: 'A',
         announcement_rule: 'PUBLISH',
         store_scope: 'GLOBAL',
@@ -54,19 +56,20 @@ class AuthService {
     }
 
     async login(username: string, passwordInput: string): Promise<boolean> {
+        // 1. Check Hardcoded Super Admin
         if (username === '管理员' && passwordInput === 'ss631204') {
             this.currentUser = DEFAULT_ADMIN;
             this.setSession(this.currentUser);
             return true;
         }
 
+        // 2. Check DB Users
         try {
             const users = await dataService.getUsers(); 
             const user = users.find(u => u.username === username && u.password === passwordInput);
             
             if (user) {
-                // Ensure permissions object exists for legacy support, 
-                // but application logic should prefer Global Matrix via Context.
+                // Ensure permissions object exists and has defaults for new fields
                 user.permissions = { ...DEFAULT_PERMISSIONS, ...user.permissions };
                 
                 this.currentUser = user;
@@ -97,7 +100,7 @@ class AuthService {
         if (this.currentUser) dataService.logClientAction('LOGOUT', { username: this.currentUser.username });
         this.currentUser = null;
         sessionStorage.removeItem(this.SESSION_KEY);
-        sessionStorage.clear(); 
+        sessionStorage.clear(); // Clear all session flags (e.g., popup viewed)
         window.location.reload();
     }
 }

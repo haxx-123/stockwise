@@ -66,33 +66,31 @@ export type AuditLog = {
 // 0-9: Lower is higher power. 00 is Admin.
 export type RoleLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
-export interface UserPermissions {
-    logs_level: 'A' | 'B' | 'C' | 'D'; // A:All+UndoAny, B:All+UndoLower, C:All+UndoSelf, D:Self+UndoSelf
+// The structure for the Global Matrix Row
+export interface RolePermissionRule {
+    role_level: RoleLevel;
+    logs_level: 'A' | 'B' | 'C' | 'D';
     announcement_rule: 'PUBLISH' | 'VIEW';
     store_scope: 'GLOBAL' | 'LIMITED';
     show_excel: boolean;
-    
-    // New Permission Dimensions
-    view_peers: boolean; // Can view/manage users of same level
+    view_peers: boolean;
     view_self_in_list: boolean;
-    hide_perm_page: boolean; 
-    
-    // New Hiding Options
+    hide_perm_page: boolean;
     hide_audit_hall: boolean;
-    hide_store_management: boolean; // Hides Rename, Delete, Create Store
-    
-    // Special Init Account Permission
-    only_view_config?: boolean;
+    hide_store_management: boolean;
+    only_view_config: boolean;
 }
 
-export type RolePermissionMatrix = Record<RoleLevel, UserPermissions>;
+export type UserPermissions = RolePermissionRule; // Alias for backward compatibility in types
+
+export type RolePermissionMatrix = Record<RoleLevel, RolePermissionRule>;
 
 export type User = {
   id: string;
   username: string;
   password?: string; 
   role_level: RoleLevel; 
-  permissions: UserPermissions; // Deprecated in favor of Matrix, but kept for legacy/init
+  permissions: UserPermissions; // Still kept on user for specific overrides or cache, but logic should prefer Matrix
   allowed_store_ids: string[]; // For LIMITED scope
   is_archived?: boolean; // Soft Delete
   face_descriptor?: string | null; // Base64 of face image or descriptor

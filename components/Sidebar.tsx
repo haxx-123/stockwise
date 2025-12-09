@@ -4,7 +4,7 @@ import { Icons } from './Icons';
 import { authService } from '../services/authService';
 import { UsernameBadge } from './UsernameBadge';
 import { SVIPBadge } from './SVIPBadge';
-import { usePermission } from '../contexts/PermissionContext';
+import { useUserPermissions } from '../contexts/PermissionContext';
 
 interface SidebarProps {
   currentPage: string;
@@ -17,8 +17,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const user = authService.getCurrentUser();
-  const { getPermissions } = usePermission();
-  const perms = getPermissions(user?.role_level || 9);
+  // Use Context for permissions
+  const perms = useUserPermissions(user?.role_level);
 
   useEffect(() => {
       const handleResize = () => setIsMobile(window.innerWidth < 768);
@@ -33,6 +33,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
     { id: 'logs', label: '操作日志', icon: Icons.Sparkles },
   ];
 
+  // Logic from permissions
   if (currentStore === 'all' && ['A','B','C'].includes(perms.logs_level)) {
       if (!perms.hide_audit_hall) {
           menuItems.push({ id: 'audit', label: '审计大厅', icon: Icons.AlertTriangle });
@@ -118,21 +119,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
       </nav>
 
       <div className="p-4 border-t border-gray-100 dark:border-gray-800 bg-gray-50/50 dark:bg-gray-900/50">
-        {(user?.role_level === 0 || user?.role_level === 1) ? (
-            <div className="flex justify-center">
-                 <SVIPBadge name={user.username} roleLevel={user.role_level} size="md" />
-            </div>
-        ) : (
+         {(user?.role_level === 0 || user?.role_level === 1) ? (
+             <SVIPBadge name={user?.username || ''} roleLevel={user?.role_level} />
+         ) : (
             <div className="flex items-center space-x-3 px-2 py-1">
-               <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-sm font-bold text-white shadow-md font-mono">
-                 {String(user?.role_level).padStart(2,'0')}
-               </div>
-               <div className="overflow-hidden">
-                 <UsernameBadge name={user?.username || ''} roleLevel={user?.role_level || 9} />
-                 <p className="text-gray-500 dark:text-gray-400 text-xs truncate">Level {String(user?.role_level).padStart(2,'0')}</p>
-               </div>
+                <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center text-sm font-bold text-white shadow-md font-mono">
+                    {String(user?.role_level).padStart(2,'0')}
+                </div>
+                <div className="overflow-hidden">
+                    <UsernameBadge name={user?.username || ''} roleLevel={user?.role_level || 9} />
+                    <p className="text-gray-500 dark:text-gray-400 text-xs truncate">Level {String(user?.role_level).padStart(2,'0')}</p>
+                </div>
             </div>
-        )}
+         )}
       </div>
     </div>
   );

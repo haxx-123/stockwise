@@ -1,13 +1,13 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
 import { dataService } from '../services/dataService';
-import { User, Store, RoleLevel } from '../types';
+import { User, Store, UserPermissions, RoleLevel } from '../types';
 import { Icons } from '../components/Icons';
 import { UsernameBadge } from '../components/UsernameBadge';
 import { SVIPBadge } from '../components/SVIPBadge';
-import { usePermission } from '../contexts/PermissionContext';
+import { useUserPermissions, usePermissionContext } from '../contexts/PermissionContext';
 
 export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: string) => void }> = ({ subPage = 'config', onThemeChange }) => {
     const [configUrl, setConfigUrl] = useState('');
@@ -35,46 +35,111 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT
     const sqlScript = `
--- STOCKWISE V2.8 GLOBAL MATRIX MIGRATION
+-- STOCKWISE V2.9.2 FIXED MIGRATION SCRIPT
 -- SQL是/否较上一次发生更改: 是
 -- SQL是/否必须包含重置数据库: 否
 
+-- Enable UUID extension
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 DO $$ 
 BEGIN 
-    -- 1. Create Role Permission Matrix Table
-    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name='role_permissions') THEN
-        CREATE TABLE role_permissions (
-            role_level integer PRIMARY KEY,
-            permissions jsonb NOT NULL
-        );
-        -- Enable Realtime
-        ALTER PUBLICATION supabase_realtime ADD TABLE role_permissions;
+    -- 1. Schema Updates (Safely add columns)
+    
+    -- Stores Table
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'stores') THEN
+        CREATE TABLE stores (id text PRIMARY KEY, name text, location text, is_archived boolean default false);
+    ELSE
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stores' AND column_name='is_archived') THEN
+            ALTER TABLE stores ADD COLUMN is_archived boolean default false;
+        END IF;
     END IF;
 
-    -- 2. Populate Defaults (If empty)
-    IF NOT EXISTS (SELECT 1 FROM role_permissions WHERE role_level=0) THEN
-        INSERT INTO role_permissions (role_level, permissions) VALUES 
-        (0, '{"logs_level": "A", "announcement_rule": "PUBLISH", "store_scope": "GLOBAL", "show_excel": true, "view_peers": true, "view_self_in_list": true, "hide_perm_page": false, "hide_audit_hall": false, "hide_store_management": false}'::jsonb),
-        (1, '{"logs_level": "A", "announcement_rule": "PUBLISH", "store_scope": "GLOBAL", "show_excel": true, "view_peers": true, "view_self_in_list": true, "hide_perm_page": false, "hide_audit_hall": false, "hide_store_management": false}'::jsonb),
-        (2, '{"logs_level": "B", "announcement_rule": "VIEW", "store_scope": "GLOBAL", "show_excel": true, "view_peers": false, "view_self_in_list": true, "hide_perm_page": false, "hide_audit_hall": true, "hide_store_management": true}'::jsonb),
-        (9, '{"logs_level": "D", "announcement_rule": "VIEW", "store_scope": "LIMITED", "show_excel": false, "view_peers": false, "view_self_in_list": true, "hide_perm_page": false, "hide_audit_hall": true, "hide_store_management": true}'::jsonb);
+    -- Products Table
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'products') THEN
+        CREATE TABLE products (id text PRIMARY KEY, name text, sku text, category text, unit_name text, split_unit_name text, split_ratio numeric, min_stock_level numeric, image_url text, is_archived boolean default false, bound_store_id text);
+    ELSE
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='bound_store_id') THEN
+            ALTER TABLE products ADD COLUMN bound_store_id text references stores(id);
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='is_archived') THEN
+            ALTER TABLE products ADD COLUMN is_archived boolean default false;
+        END IF;
     END IF;
 
-    -- 3. Schema Updates from previous
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stores' AND column_name='is_archived') THEN
-        ALTER TABLE stores ADD COLUMN is_archived boolean default false;
+    -- Transactions Table
+    IF NOT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'transactions') THEN
+        CREATE TABLE transactions (id text PRIMARY KEY, type text, product_id text, store_id text, batch_id text, quantity numeric, balance_after numeric, timestamp timestamptz, note text, operator text, snapshot_data jsonb, is_undone boolean default false);
+    ELSE
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='is_undone') THEN
+            ALTER TABLE transactions ADD COLUMN is_undone boolean default false;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='snapshot_data') THEN
+            ALTER TABLE transactions ADD COLUMN snapshot_data jsonb;
+        END IF;
     END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='products' AND column_name='bound_store_id') THEN
-        ALTER TABLE products ADD COLUMN bound_store_id text references stores(id);
-    END IF;
-    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='transactions' AND column_name='is_undone') THEN
-        ALTER TABLE transactions ADD COLUMN is_undone boolean default false;
-    END IF;
+
+    -- Announcements Table
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='announcements' AND column_name='allow_delete') THEN
         ALTER TABLE announcements ADD COLUMN allow_delete boolean default true;
     END IF;
+
+    -- Users Table
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='users' AND column_name='face_descriptor') THEN
         ALTER TABLE users ADD COLUMN face_descriptor text;
+    END IF;
+
+    -- 2. Create Audit Logs Table if not exists
+    CREATE TABLE IF NOT EXISTS system_audit_logs (
+        id bigserial PRIMARY KEY,
+        table_name text,
+        record_id text,
+        operation text,
+        old_data jsonb,
+        new_data jsonb,
+        timestamp timestamptz default now()
+    );
+
+    -- 3. Permission Matrix Table (Robust Check)
+    CREATE TABLE IF NOT EXISTS role_permissions (
+        role_level integer PRIMARY KEY
+    );
+    
+    -- CRITICAL FIX: Drop legacy 'permissions' column if exists to avoid NOT NULL violation
+    IF EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='permissions') THEN
+        ALTER TABLE role_permissions DROP COLUMN permissions;
+    END IF;
+    
+    -- Explicitly check and add missing columns to role_permissions
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='logs_level') THEN
+        ALTER TABLE role_permissions ADD COLUMN logs_level text DEFAULT 'D';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='announcement_rule') THEN
+        ALTER TABLE role_permissions ADD COLUMN announcement_rule text DEFAULT 'VIEW';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='store_scope') THEN
+        ALTER TABLE role_permissions ADD COLUMN store_scope text DEFAULT 'LIMITED';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='show_excel') THEN
+        ALTER TABLE role_permissions ADD COLUMN show_excel boolean DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='view_peers') THEN
+        ALTER TABLE role_permissions ADD COLUMN view_peers boolean DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='view_self_in_list') THEN
+        ALTER TABLE role_permissions ADD COLUMN view_self_in_list boolean DEFAULT true;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='hide_perm_page') THEN
+        ALTER TABLE role_permissions ADD COLUMN hide_perm_page boolean DEFAULT false;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='hide_audit_hall') THEN
+        ALTER TABLE role_permissions ADD COLUMN hide_audit_hall boolean DEFAULT true;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='hide_store_management') THEN
+        ALTER TABLE role_permissions ADD COLUMN hide_store_management boolean DEFAULT true;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='role_permissions' AND column_name='only_view_config') THEN
+        ALTER TABLE role_permissions ADD COLUMN only_view_config boolean DEFAULT false;
     END IF;
 
     -- 4. Initialization User
@@ -85,16 +150,93 @@ BEGIN
             '初始化',
             '123',
             9,
-            '{
-                "logs_level": "D", 
-                "only_view_config": true
-            }'::jsonb,
+            '{}'::jsonb,
             '{}',
             false
         );
     END IF;
 
 END $$;
+
+-- 5. Insert Default Matrix if Empty (Safe Insert)
+INSERT INTO role_permissions (role_level, logs_level, announcement_rule, store_scope, show_excel, view_peers, view_self_in_list, hide_perm_page, hide_audit_hall, hide_store_management, only_view_config)
+VALUES 
+(0, 'A', 'PUBLISH', 'GLOBAL', true, true, true, false, false, false, false),
+(1, 'A', 'PUBLISH', 'GLOBAL', true, true, true, false, false, false, false),
+(2, 'B', 'VIEW', 'GLOBAL', true, true, true, false, false, true, false),
+(3, 'C', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
+(4, 'C', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
+(5, 'C', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
+(6, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
+(7, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
+(8, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false),
+(9, 'D', 'VIEW', 'LIMITED', false, false, true, true, true, true, false)
+ON CONFLICT (role_level) DO NOTHING;
+
+-- 6. Safe Realtime Enablement
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_publication_tables 
+        WHERE pubname = 'supabase_realtime' AND tablename = 'role_permissions'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE role_permissions;
+    END IF;
+EXCEPTION 
+    WHEN OTHERS THEN NULL; 
+END $$;
+
+-- 7. Functions & Triggers
+
+-- Audit Trigger Function
+create or replace function log_audit_trail() returns trigger as $$
+begin
+  if (TG_OP = 'DELETE') then
+    insert into system_audit_logs (table_name, record_id, operation, old_data)
+    values (TG_TABLE_NAME, OLD.id, TG_OP, row_to_json(OLD));
+    return OLD;
+  elsif (TG_OP = 'UPDATE') then
+    insert into system_audit_logs (table_name, record_id, operation, old_data, new_data)
+    values (TG_TABLE_NAME, NEW.id, TG_OP, row_to_json(OLD), row_to_json(NEW));
+    return NEW;
+  elsif (TG_OP = 'INSERT') then
+    insert into system_audit_logs (table_name, record_id, operation, new_data)
+    values (TG_TABLE_NAME, NEW.id, TG_OP, row_to_json(NEW));
+    return NEW;
+  end if;
+  return null;
+end;
+$$ language plpgsql;
+
+-- Apply Audit Trigger to Batches (Idempotent)
+drop trigger if exists audit_batches_trigger on batches;
+create trigger audit_batches_trigger after insert or update or delete on batches for each row execute function log_audit_trail();
+
+-- Stock Operation RPC
+create or replace function operate_stock(
+  p_batch_id text,
+  p_qty_change integer,
+  p_type text,
+  p_note text,
+  p_operator text,
+  p_snapshot jsonb
+) returns void as $$
+declare
+  v_new_qty integer;
+  v_batch record;
+begin
+  select * from batches where id = p_batch_id into v_batch;
+  if not found then raise exception 'Batch not found'; end if;
+  
+  v_new_qty := v_batch.quantity + p_qty_change;
+  if v_new_qty < 0 then raise exception 'Insufficient stock.'; end if;
+  
+  update batches set quantity = v_new_qty where id = p_batch_id;
+  
+  insert into transactions (id, type, product_id, store_id, batch_id, quantity, balance_after, timestamp, note, operator, snapshot_data) 
+  values (gen_random_uuid(), p_type, v_batch.product_id, v_batch.store_id, p_batch_id, p_qty_change, v_new_qty, now(), p_note, p_operator, p_snapshot);
+end;
+$$ language plpgsql;
 `;
 
     if (subPage === 'config') {
@@ -102,6 +244,7 @@ END $$;
             <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100 flex flex-col gap-6">
                 <h1 className="text-2xl font-bold mb-2">连接配置</h1>
                 <div className="bg-white dark:bg-gray-900 p-4 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 flex flex-col gap-4 max-w-[100vw] overflow-hidden">
+                    {/* Mobile Vertical Layout enforced via flex-col */}
                     <div className="flex flex-col gap-4 w-full">
                         <div className="w-full">
                             <label className="block text-sm font-medium mb-2">Supabase Project URL</label>
@@ -113,10 +256,11 @@ END $$;
                                 type="password" 
                                 value={configKey} 
                                 onChange={(e) => setConfigKey(e.target.value)} 
-                                onCopy={(e) => e.preventDefault()} 
+                                onCopy={(e) => e.preventDefault()} // Prevent Copy
                                 className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white break-all select-none" 
                             />
                         </div>
+                        
                         <div className="w-full">
                              <div className="flex justify-between items-center mb-2">
                                  <h3 className="font-bold text-sm">数据库初始化 SQL</h3>
@@ -124,6 +268,7 @@ END $$;
                              </div>
                              <pre className="bg-black text-green-400 p-4 rounded h-40 overflow-auto text-xs font-mono w-full whitespace-pre-wrap break-all">{sqlScript}</pre>
                         </div>
+
                         <button onClick={handleSaveConfig} className="w-full bg-blue-600 text-white px-8 py-3 rounded-lg hover:bg-blue-700 font-bold mt-2">保存配置</button>
                     </div>
                     {saved && <span className="text-green-600 font-bold text-center">已保存</span>}
@@ -151,37 +296,51 @@ END $$;
 };
 
 const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
-    // ... (Existing FaceSetup implementation remains same) ...
-    // Note: Re-implementing simplified to save space in this response, assume logic matches previous file.
-    const videoRef = React.useRef<HTMLVideoElement>(null);
-    const [status, setStatus] = React.useState('初始化相机...');
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const [status, setStatus] = useState('初始化相机...');
+
+    const stopStream = () => {
+        if(videoRef.current && videoRef.current.srcObject) {
+            (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+            videoRef.current.srcObject = null;
+        }
+    };
 
     useEffect(() => {
-        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } }).then(stream => {
-            if(videoRef.current) videoRef.current.srcObject = stream;
-            setStatus("请将脸部对准摄像头");
-        }).catch(err => setStatus("相机访问失败"));
-        return () => { if(videoRef.current?.srcObject) (videoRef.current.srcObject as MediaStream).getTracks().forEach(t=>t.stop()); }
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+            .then(stream => {
+                if(videoRef.current) videoRef.current.srcObject = stream;
+                setStatus("请将脸部对准摄像头");
+            })
+            .catch(err => setStatus("相机访问失败: " + err.message));
+        return () => stopStream();
     }, []);
-    
+
     const capture = async () => {
         if (!videoRef.current) return;
         const canvas = document.createElement('canvas');
         canvas.width = videoRef.current.videoWidth;
         canvas.height = videoRef.current.videoHeight;
         canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
-        await dataService.updateUser(user.id, { face_descriptor: canvas.toDataURL('image/jpeg', 0.8) });
+        const base64 = canvas.toDataURL('image/jpeg', 0.8);
+        
+        setStatus("正在录入...");
+        await dataService.updateUser(user.id, { face_descriptor: base64 });
+        stopStream();
         onSuccess();
     };
 
     return (
         <div className="fixed inset-0 bg-black/80 z-[100] flex items-center justify-center p-4">
             <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-sm flex flex-col items-center gap-4">
-                <video ref={videoRef} autoPlay muted className="w-64 h-64 rounded-full object-cover border-4 border-blue-500"></video>
-                <p className="text-gray-500 text-sm">{status}</p>
+                <h3 className="font-bold text-lg dark:text-white">人脸识别设置</h3>
+                <div className="w-64 h-64 bg-black rounded-full overflow-hidden border-4 border-blue-500 relative">
+                    <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
+                </div>
+                <p className="text-sm text-gray-500">{status}</p>
                 <div className="flex gap-4 w-full">
-                    <button onClick={onCancel} className="flex-1 py-2 text-gray-500">取消</button>
-                    <button onClick={capture} className="flex-1 py-2 bg-blue-600 text-white rounded font-bold">录入</button>
+                    <button onClick={() => {stopStream(); onCancel();}} className="flex-1 py-2 text-gray-500">取消</button>
+                    <button onClick={capture} className="flex-1 py-2 bg-blue-600 text-white rounded font-bold">录入人脸</button>
                 </div>
             </div>
         </div>
@@ -207,71 +366,104 @@ const AccountSettings = () => {
 
     const handleSave = async () => {
         if (!user) return;
-        await dataService.updateUser(user.id, { username: form.username, password: form.password });
-        authService.setSession({ ...user, ...form });
-        alert("保存成功");
-        window.location.reload();
+        try {
+            await dataService.updateUser(user.id, { username: form.username, password: form.password });
+            const updated = { ...user, ...form };
+            sessionStorage.setItem('sw_session_user', JSON.stringify(updated));
+            alert("保存成功");
+            window.location.reload();
+        } catch(e: any) { alert(e.message); }
+    };
+
+    const handleSwitch = (u: User) => {
+        if(confirm(`切换到账户 ${u.username}?`)) {
+            authService.switchAccount(u);
+        }
     };
 
     return (
         <div className="p-4 md:p-8 max-w-4xl mx-auto dark:text-gray-100">
+            {/* SVIP Header for 00/01 */}
+            {(user?.role_level === 0 || user?.role_level === 1) && (
+                <div className="mb-6 flex justify-center">
+                    <SVIPBadge name={user?.username || ''} roleLevel={user?.role_level} className="w-full max-w-md shadow-2xl scale-110" />
+                </div>
+            )}
+
             <h1 className="text-2xl font-bold mb-6">账户设置</h1>
             <div className="grid md:grid-cols-2 gap-8">
-                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6">
+                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 w-full max-w-[100vw] overflow-hidden">
                     <h3 className="font-bold border-b pb-2 dark:border-gray-700">基本信息</h3>
-                    
-                    {/* NEW SVIP VISUALS */}
-                    {(user?.role_level === 0 || user?.role_level === 1) && (
-                        <div className="flex justify-center py-4">
-                            <SVIPBadge name={user.username} roleLevel={user.role_level} size="lg" />
+                    <div>
+                        <label className="block text-sm font-bold text-gray-500 uppercase mb-1">用户 ID (只读)</label>
+                        <div className="bg-gray-100 dark:bg-gray-800 p-2 rounded text-xs text-gray-500 font-mono break-all select-all">
+                            {user?.id}
                         </div>
-                    )}
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold text-gray-500 uppercase mb-1">管理权限等级</label>
+                        <div className="bg-gray-100 dark:bg-gray-800 p-3 rounded text-gray-600 dark:text-gray-400 font-mono font-bold">
+                            {String(user?.role_level).padStart(2, '0')}
+                        </div>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold mb-1">用户名</label>
+                        <input value={form.username} onChange={e => setForm({...form, username: e.target.value})} className="w-full border p-3 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/>
+                    </div>
+                    <div>
+                        <label className="block text-sm font-bold mb-1">密码</label>
+                        <div className="relative">
+                            <input type={showPass ? "text" : "password"} value={form.password} onChange={e => setForm({...form, password: e.target.value})} className="w-full border p-3 rounded dark:bg-gray-800 dark:border-gray-600 pr-10 dark:text-white"/>
+                            <button onClick={() => setShowPass(!showPass)} className="absolute right-3 top-3 text-gray-400"><Icons.ArrowRightLeft size={16}/></button>
+                        </div>
+                    </div>
                     
-                    <div><label className="text-sm font-bold text-gray-500">ID</label><div className="bg-gray-100 dark:bg-gray-800 p-2 text-xs break-all rounded">{user?.id}</div></div>
-                    <div><label className="text-sm font-bold text-gray-500">Level</label><div className="bg-gray-100 dark:bg-gray-800 p-2 font-mono font-bold rounded">{String(user?.role_level).padStart(2,'0')}</div></div>
-                    <div><label className="text-sm font-bold">用户名</label><input value={form.username} onChange={e => setForm({...form, username: e.target.value})} className="w-full border p-3 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
-                    <div><label className="text-sm font-bold">密码</label><div className="relative"><input type={showPass?"text":"password"} value={form.password} onChange={e=>setForm({...form, password:e.target.value})} className="w-full border p-3 rounded dark:bg-gray-800 dark:border-gray-600"/><button onClick={()=>setShowPass(!showPass)} className="absolute right-3 top-3"><Icons.ArrowRightLeft size={16}/></button></div></div>
-                    
-                    <button onClick={()=>setShowFaceSetup(true)} className={`w-full py-3 rounded font-bold border ${user?.face_descriptor ? 'border-green-500 text-green-600' : 'border-gray-300'}`}>{user?.face_descriptor?'重录人脸':'设置人脸'}</button>
-                    <button onClick={handleSave} className="w-full py-3 bg-blue-600 text-white rounded font-bold shadow-md">保存变更</button>
-                    <button onClick={()=>authService.logout()} className="w-full py-3 text-red-600 border border-red-200 rounded font-bold hover:bg-red-50">退出账号</button>
+                    <button onClick={()=>setShowFaceSetup(true)} className={`w-full py-3 rounded font-bold border ${user?.face_descriptor ? 'border-green-500 text-green-600 bg-green-50' : 'border-gray-300 text-gray-600'}`}>
+                        {user?.face_descriptor ? '人脸已录入 (点击重新录入)' : '设置人脸识别登录'}
+                    </button>
+
+                    <button onClick={handleSave} className="w-full py-3 rounded font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md">保存变更</button>
+                    <button onClick={() => {if(confirm("确定要退出登录吗？")) authService.logout();}} className="w-full py-3 rounded font-bold border border-red-200 text-red-600 hover:bg-red-50 dark:border-red-900 dark:hover:bg-red-900/20">退出账号</button>
                 </div>
                 
-                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 h-fit">
-                     <h3 className="font-bold border-b pb-2 dark:border-gray-700 flex items-center gap-2"><Icons.ArrowRightLeft size={18}/> 快速切换</h3>
-                     <div className="max-h-60 overflow-y-auto space-y-2 mt-4">
+                <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl shadow-sm border dark:border-gray-700 space-y-6 h-fit w-full max-w-[100vw] overflow-hidden">
+                     <h3 className="font-bold border-b pb-2 dark:border-gray-700 flex items-center gap-2"><Icons.ArrowRightLeft size={18}/> 快速切换账户</h3>
+                     <div className="max-h-60 overflow-y-auto custom-scrollbar border rounded dark:border-gray-700">
+                         {lowerUsers.length === 0 && <div className="p-4 text-center text-gray-400 text-sm">无下级账户</div>}
                          {lowerUsers.map(u => (
-                             <button key={u.id} onClick={() => authService.switchAccount(u)} className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-800 border-b dark:border-gray-800 flex justify-between">
+                             <button key={u.id} onClick={() => handleSwitch(u)} className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-800 border-b dark:border-gray-800 flex justify-between items-center group">
                                  <UsernameBadge name={u.username} roleLevel={u.role_level} />
-                                 <span className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">Lv.{u.role_level}</span>
+                                 <span className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-gray-500 dark:text-gray-300">Lv.{u.role_level}</span>
                              </button>
                          ))}
                      </div>
                 </div>
             </div>
-            {showFaceSetup && <FaceSetup user={user} onSuccess={()=>{setShowFaceSetup(false); window.location.reload();}} onCancel={()=>setShowFaceSetup(false)} />}
+            {showFaceSetup && <FaceSetup user={user} onSuccess={()=>{setShowFaceSetup(false); alert("录入成功"); window.location.reload();}} onCancel={()=>setShowFaceSetup(false)} />}
         </div>
     );
 };
 
 const PermissionsSettings = () => {
     const currentUser = authService.getCurrentUser();
-    const { getPermissions } = usePermission();
-    // Use Matrix permissions to check 'view_peers'
-    const myPerms = getPermissions(currentUser?.role_level || 9);
+    // Use Matrix to display role capabilities if we wanted to show them, but here we edit USERS.
+    const { getPermission } = usePermissionContext(); 
+    
+    // We still use current user's matrix-based permissions to decide if they can view this page (handled by parent logic typically)
+    const myPerms = getPermission(currentUser?.role_level ?? 9);
 
     const [subordinates, setSubordinates] = useState<User[]>([]);
     const [stores, setStores] = useState<Store[]>([]);
     const [isModalOpen, setIsModalOpen] = useState(false);
     const [editingUser, setEditingUser] = useState<User | null>(null);
     const [formData, setFormData] = useState<Partial<User>>({});
+    const [hasChanges, setHasChanges] = useState(false);
 
     const loadData = async () => {
         if (!currentUser) return;
         const [users, allStores] = await Promise.all([dataService.getUsers(), dataService.getStores()]);
         
-        let subs = [];
-        // Determine visibility based on matrix permission
+        let subs: User[] = [];
         if (myPerms.view_peers) {
              subs = users.filter(u => u.role_level >= currentUser.role_level);
         } else {
@@ -287,15 +479,11 @@ const PermissionsSettings = () => {
 
     const handleEdit = (user: User | null) => {
         if (user) {
-            // Edit Rule: Can only modify if lower level (higher number) OR self (if allowed)
-            // If peer viewing is allowed, can see peers but cannot modify them unless self?
-            // Prompt doesn't specify editing peer restriction beyond standard hierarchy. 
-            // "Show self and visible peers means can respectively modify self... and create new peer".
-            // So if user is peer (same level) and not self, deny edit.
-            if (user.role_level === currentUser?.role_level && user.id !== currentUser?.id) {
-                return alert("仅可查看同级用户，无法修改他人权限");
+            // Edit existing
+            if (currentUser && user.role_level <= currentUser.role_level && user.id !== currentUser.id) {
+                alert("无权修改同级或上级用户 (仅可查看)");
+                return;
             }
-
             setEditingUser(user);
             setFormData(JSON.parse(JSON.stringify(user)));
         } else {
@@ -303,13 +491,29 @@ const PermissionsSettings = () => {
             setEditingUser(null);
             setFormData({
                 username: '', password: '123', 
-                // Default to one level lower, unless view_peers allows same level
                 role_level: (myPerms.view_peers ? currentUser?.role_level : (currentUser?.role_level || 0) + 1) as RoleLevel,
-                permissions: DEFAULT_PERMISSIONS, // Legacy json, will be ignored by Matrix logic usually
+                permissions: JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)), // These permissions might override Matrix or just be ignored, depends on backend implementation
                 allowed_store_ids: []
             });
         }
+        setHasChanges(false);
         setIsModalOpen(true);
+    };
+
+    const handleChange = (field: string, value: any, nested?: string) => {
+        setHasChanges(true);
+        if (nested) {
+            setFormData(prev => ({ ...prev, permissions: { ...prev.permissions!, [field]: value } }));
+        } else {
+            setFormData(prev => ({ ...prev, [field]: value }));
+        }
+    };
+
+    const handleStoreChange = (storeId: string, checked: boolean) => {
+        setHasChanges(true);
+        const current = new Set(formData.allowed_store_ids || []);
+        if (checked) current.add(storeId); else current.delete(storeId);
+        setFormData(prev => ({ ...prev, allowed_store_ids: Array.from(current) }));
     };
 
     const handleSave = async () => {
@@ -317,38 +521,38 @@ const PermissionsSettings = () => {
         
         const inputLevel = Number(formData.role_level);
         const myLevel = currentUser?.role_level || 0;
-
-        // Creation Rule
-        if (!editingUser) {
-            if (inputLevel < myLevel) return alert("无法创建比自己等级更高的用户");
-            if (inputLevel === myLevel && !myPerms.view_peers) return alert("无法创建同级用户");
-        }
-
-        // Modification Rule: DEMOTE ONLY (Cannot move to higher level / lower number)
+        
         if (editingUser) {
-            const oldLevel = editingUser.role_level;
-            // "Only modify to LOWER level (higher number)".
-            if (inputLevel < oldLevel) {
-                return alert("禁止提升管理权限等级 (只能往低等级/大数字修改)");
-            }
-            // Also cannot promote to above me obviously
-            if (inputLevel < myLevel) return alert("权限非法");
+             // Modification - DEMOTE ONLY Logic
+             const originalLevel = editingUser.role_level;
+             
+             // Rule: "Permission Level only modify to lower (higher number)"
+             if (inputLevel < originalLevel) {
+                 return alert("权限等级只能往低修改 (数字变大)，不可往高修改！");
+             }
+
+             // Also standard check against my own level
+             if (inputLevel <= myLevel && editingUser.id !== currentUser?.id) {
+                 return alert("不能将用户等级提升至与您相同或更高");
+             }
+        } else {
+             // Creation
+             if (inputLevel < myLevel) return alert("不能创建比自己等级高的用户");
         }
 
         try {
-            // We still save permissions JSON to user row for legacy/override support if needed, 
-            // though the app now relies on Matrix for actual capability checks. 
-            // The prompt says "Runtime calculation...". 
-            // Ideally we should NOT edit permissions here if we use Matrix, but the UI might allow overriding? 
-            // The prompt says "Permission settings... edit user page...". 
-            // Let's assume we are just editing User Role & Store Scope. 
-            // Detailed permissions might be read-only if driven by Matrix? 
-            // But for now, let's keep saving it.
             if (editingUser) await dataService.updateUser(editingUser.id, formData);
             else await dataService.createUser(formData as any);
             setIsModalOpen(false);
             loadData();
         } catch(e: any) { alert(e.message); }
+    };
+
+    const handleDeleteUser = async (u: User) => {
+        if (currentUser && u.role_level <= currentUser.role_level && u.id !== currentUser.id) {
+             return alert("无法删除同级或上级用户");
+        }
+        if(confirm("确定删除该用户？(软删除)")) { await dataService.deleteUser(u.id); loadData(); }
     };
 
     return (
@@ -366,7 +570,8 @@ const PermissionsSettings = () => {
                          <tr>
                              <th className="p-4">用户</th>
                              <th className="p-4">等级</th>
-                             <th className="p-4">权限来源</th>
+                             <th className="p-4">日志权限</th>
+                             <th className="p-4">门店范围</th>
                              <th className="p-4 text-right">操作</th>
                          </tr>
                      </thead>
@@ -375,9 +580,11 @@ const PermissionsSettings = () => {
                              <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
                                  <td className="p-4"><UsernameBadge name={u.username} roleLevel={u.role_level} /></td>
                                  <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
-                                 <td className="p-4 text-sm text-gray-500">Global Matrix (Lv.{u.role_level})</td>
+                                 <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{u.permissions.logs_level}级</span></td>
+                                 <td className="p-4 text-sm">{u.permissions.store_scope === 'GLOBAL' ? '全局' : `受限 (${u.allowed_store_ids.length})`}</td>
                                  <td className="p-4 text-right space-x-2">
                                      <button onClick={() => handleEdit(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
+                                     <button onClick={() => handleDeleteUser(u)} className="text-red-600 font-bold hover:underline">删除</button>
                                  </td>
                              </tr>
                          ))}
@@ -387,29 +594,99 @@ const PermissionsSettings = () => {
 
              {isModalOpen && formData && (
                  <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
-                     <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-md p-6 space-y-4">
-                         <h3 className="font-bold text-lg dark:text-white">{editingUser ? '编辑用户' : '新增用户'}</h3>
-                         <div><label className="text-sm font-bold">用户名</label><input value={formData.username} onChange={e=>setFormData({...formData, username: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white"/></div>
-                         <div><label className="text-sm font-bold">密码</label><input value={formData.password} onChange={e=>setFormData({...formData, password: e.target.value})} className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white"/></div>
-                         
-                         <div>
-                             <label className="text-sm font-bold">管理等级 (Role Level)</label>
-                             <input 
-                                type="number" 
-                                min={currentUser?.role_level} 
-                                max="9"
-                                value={formData.role_level} 
-                                onChange={e=>setFormData({...formData, role_level: Number(e.target.value) as RoleLevel})} 
-                                className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white"
-                             />
-                             <p className="text-xs text-red-500 mt-1">注意：修改等级时，只允许降低权限（即增大数字），严禁提升权限。</p>
+                     <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl flex flex-col">
+                         <div className="p-6 border-b dark:border-gray-700 flex justify-between items-center">
+                             <h2 className="text-xl font-bold">{editingUser ? '编辑用户' : '新增用户'}</h2>
+                             <button onClick={() => setIsModalOpen(false)}><Icons.Minus size={24}/></button>
                          </div>
+                         <div className="p-6 space-y-6 flex-1">
+                             <div className="space-y-4">
+                                 <h3 className="font-bold border-b dark:border-gray-700 pb-2">基本属性</h3>
+                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                     {editingUser && (
+                                         <div className="md:col-span-2">
+                                             <label className="block text-sm font-bold text-gray-500">ID (只读)</label>
+                                             <div className="bg-gray-100 dark:bg-gray-800 p-2 text-xs font-mono break-all">{editingUser.id}</div>
+                                         </div>
+                                     )}
+                                     <div><label className="block text-sm font-bold mb-1">用户名</label><input value={formData.username} onChange={e => handleChange('username', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
+                                     <div><label className="block text-sm font-bold mb-1">密码</label><input value={formData.password} onChange={e => handleChange('password', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
+                                     <div>
+                                         <label className="block text-sm font-bold mb-1">等级 (0-9)</label>
+                                         <input 
+                                             type="number" 
+                                             min={myPerms.view_peers ? currentUser?.role_level : (currentUser?.role_level||0)+1} 
+                                             max="9" 
+                                             value={formData.role_level} 
+                                             onChange={e => handleChange('role_level', Number(e.target.value))} 
+                                             className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"
+                                         />
+                                         <p className="text-xs text-gray-500 mt-1">您是等级 {currentUser?.role_level}，{myPerms.view_peers ? '可以创建同级用户' : '只能创建更低等级用户'}</p>
+                                         {editingUser && <p className="text-xs text-red-500 font-bold">注意: 编辑时只能降低等级 (增大数字)</p>}
+                                     </div>
+                                 </div>
+                             </div>
 
-                         {/* Store Scope usually overrides global matrix if strictly implemented, but let's keep it simple for now as requested by "Strict Hierarchy" changes only */}
-                         
-                         <div className="flex justify-end gap-2 mt-4">
-                             <button onClick={() => setIsModalOpen(false)} className="px-4 py-2 text-gray-500">取消</button>
-                             <button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded font-bold">保存</button>
+                             <div className="space-y-4">
+                                 <h3 className="font-bold border-b dark:border-gray-700 pb-2">覆盖权限 (可选)</h3>
+                                 <p className="text-xs text-gray-500 mb-2">以下设置若不修改，将默认使用该等级({formData.role_level})的全剧矩阵配置。</p>
+                                 
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
+                                    <label className="block font-bold mb-2">日志权限</label>
+                                    <div className="space-y-2 text-sm">
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'A'} onChange={() => handleChange('logs_level', 'A', 'perm')} /> 
+                                            <span className="font-bold text-red-600">A级:</span> 查看所有 + 任意撤销
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'B'} onChange={() => handleChange('logs_level', 'B', 'perm')} /> 
+                                            <span className="font-bold text-orange-600">B级:</span> 查看所有 + 仅撤销低等级
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'C'} onChange={() => handleChange('logs_level', 'C', 'perm')} /> 
+                                            <span className="font-bold text-blue-600">C级:</span> 查看所有 + 仅撤销自己
+                                        </label>
+                                        <label className="flex items-center gap-2 cursor-pointer">
+                                            <input type="radio" name="logs" checked={formData.permissions?.logs_level === 'D'} onChange={() => handleChange('logs_level', 'D', 'perm')} /> 
+                                            <span className="font-bold text-gray-600">D级:</span> 仅查看自己 + 仅撤销自己
+                                        </label>
+                                    </div>
+                                 </div>
+
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
+                                     <label className="block font-bold mb-2">公告权限</label>
+                                     <div className="space-x-4">
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'PUBLISH'} onChange={() => handleChange('announcement_rule', 'PUBLISH', 'perm')} /> 发布</label>
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="ann" checked={formData.permissions?.announcement_rule === 'VIEW'} onChange={() => handleChange('announcement_rule', 'VIEW', 'perm')} /> 仅接收</label>
+                                     </div>
+                                 </div>
+
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded w-full">
+                                     <label className="block font-bold mb-2">门店范围</label>
+                                     <div className="space-x-4 mb-3">
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'GLOBAL'} onChange={() => handleChange('store_scope', 'GLOBAL', 'perm')} /> 全局</label>
+                                         <label className="inline-flex items-center gap-2"><input type="radio" name="scope" checked={formData.permissions?.store_scope === 'LIMITED'} onChange={() => handleChange('store_scope', 'LIMITED', 'perm')} /> 受限</label>
+                                     </div>
+                                     {formData.permissions?.store_scope === 'LIMITED' && (
+                                         <div className="pl-4 border-l-2 border-blue-500 grid grid-cols-2 gap-2 max-h-40 overflow-y-auto">
+                                             {stores.map(s => (<label key={s.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={formData.allowed_store_ids?.includes(s.id)} onChange={(e) => handleStoreChange(s.id, e.target.checked)} />{s.name}</label>))}
+                                         </div>
+                                     )}
+                                 </div>
+
+                                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded grid grid-cols-1 md:grid-cols-2 gap-4 w-full">
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.show_excel} onChange={(e) => handleChange('show_excel', e.target.checked, 'perm')} /> 显示 Excel 导出</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_peers} onChange={(e) => handleChange('view_peers', e.target.checked, 'perm')} /> 可见同级</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.view_self_in_list} onChange={(e) => handleChange('view_self_in_list', e.target.checked, 'perm')} /> 显示自己</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_perm_page} onChange={(e) => handleChange('hide_perm_page', e.target.checked, 'perm')} /> 隐藏权限页</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_audit_hall} onChange={(e) => handleChange('hide_audit_hall', e.target.checked, 'perm')} /> 隐藏审计大厅</label>
+                                     <label className="flex items-center gap-2"><input type="checkbox" checked={formData.permissions?.hide_store_management} onChange={(e) => handleChange('hide_store_management', e.target.checked, 'perm')} /> 隐藏门店管理 (增删改)</label>
+                                 </div>
+                             </div>
+                         </div>
+                         <div className="p-6 border-t dark:border-gray-700 flex justify-end gap-4 bg-gray-50 dark:bg-gray-800">
+                             <button onClick={() => setIsModalOpen(false)} className="px-6 py-2 text-gray-500 font-bold">取消</button>
+                             <button disabled={!hasChanges} onClick={handleSave} className={`px-6 py-2 rounded font-bold text-white transition-colors ${hasChanges ? 'bg-blue-600 hover:bg-blue-700' : 'bg-gray-400 cursor-not-allowed'}`}>保存</button>
                          </div>
                      </div>
                  </div>
