@@ -289,7 +289,7 @@ const PermissionsSettings = () => {
         if (editingUser) {
              // Editing Existing
              // Cannot Promote (decrease level number below original)
-             if (inputLevel < editingUser.role_level) return alert("权限等级只能往低修改 (数字变大)，不可往高修改！");
+             if (inputLevel < editingUser.role_level) return alert("权限等级只能往低修改 (数字变大，不可往高修改！");
         } 
 
         try {
@@ -481,7 +481,7 @@ const PermissionsSettings = () => {
                                      className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"
                                  />
                                  <p className="text-xs text-red-400 mt-1">
-                                     * 只能设置为 >= {currentUser?.role_level} (您的等级)<br/>
+                                     * 只能设置为 &gt;= {currentUser?.role_level} (您的等级)<br/>
                                      {editingUser && `* 编辑时只能调低等级 (数字变大，当前: ${editingUser.role_level})`}
                                  </p>
                              </div>
