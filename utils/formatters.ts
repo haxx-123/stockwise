@@ -1,6 +1,4 @@
 
-
-
 import { Product, RoleLevel } from '../types';
 
 export const DEFAULT_IMPORT_RATIO = 10;
@@ -61,15 +59,18 @@ export const getUserColor = (roleLevel: RoleLevel | undefined): string => {
     if (roleLevel === undefined) return 'text-black font-bold';
     const level = Number(roleLevel);
     
-    // Strict Color Coding
-    if (level === 0) return 'text-purple-600 font-extrabold shadow-sm'; // 00 亮紫色
-    if (level === 1) return 'text-yellow-500 font-extrabold shadow-sm'; // 01 亮金色
-    if (level === 2) return 'text-blue-600 font-extrabold shadow-sm';   // 02 亮蓝色
+    // Strict Color Coding Rules
+    // 00: Bright Purple (VIP)
+    if (level === 0) return 'text-purple-600 font-extrabold drop-shadow-[0_1px_1px_rgba(147,51,234,0.5)]'; 
+    // 01: Bright Gold (VIP)
+    if (level === 1) return 'text-yellow-500 font-extrabold drop-shadow-[0_1px_1px_rgba(234,179,8,0.5)]'; 
+    // 02: Bright Blue (VIP)
+    if (level === 2) return 'text-blue-600 font-extrabold drop-shadow-[0_1px_1px_rgba(37,99,235,0.5)]';   
     
-    // 03-05: Pale/Light distinct colors (No Red/Purple/Gold)
-    if (level === 3) return 'text-green-400 font-medium'; 
-    if (level === 4) return 'text-cyan-400 font-medium';
-    if (level === 5) return 'text-indigo-300 font-medium';
+    // 03-05: Pale/Light distinct colors (NO Red, Purple, Gold)
+    if (level === 3) return 'text-emerald-400 font-medium opacity-80';  // Pale Green
+    if (level === 4) return 'text-cyan-400 font-medium opacity-80';     // Pale Cyan
+    if (level === 5) return 'text-slate-400 font-medium opacity-80';    // Pale Slate
     
     // 06+: Black
     return 'text-black font-bold'; 

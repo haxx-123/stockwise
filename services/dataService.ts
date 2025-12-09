@@ -1,8 +1,4 @@
 
-
-
-
-
 import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel } from '../types';
 import { getSupabaseClient } from './supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from './authService';
@@ -182,9 +178,15 @@ class DataService {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       
-      // Check stock
-      const { count } = await client.from('batches').select('*', { count: 'exact', head: true }).eq('store_id', id).gt('quantity', 0);
-      if (count && count > 0) throw new Error("该门店下仍有库存，无法删除。");
+      // Strict Constraint: Check aggregated stock for this store
+      const { data: batches } = await client.from('batches')
+          .select('quantity')
+          .eq('store_id', id)
+          .or('is_archived.is.null,is_archived.eq.false');
+      
+      const totalStock = batches?.reduce((acc, b) => acc + b.quantity, 0) || 0;
+      
+      if (totalStock > 0) throw new Error(`该门店下仍有 ${totalStock} 件库存，无法删除。必须库存归零才允许删除。`);
 
       await this.logClientAction('DELETE_STORE', { id });
       // Soft Delete
@@ -235,7 +237,7 @@ class DataService {
           timestamp: new Date().toISOString(),
           note: `修改商品属性: ${changeDesc}`,
           operator: user?.username || 'System',
-          snapshot_data: { old, new: updates }
+          snapshot_data: { old: old, new: updates } // Save full old record for rollback
       });
   }
 
@@ -507,7 +509,7 @@ class DataService {
               timestamp: new Date().toISOString(),
               note: `修改批次属性: ${changeDesc}`,
               operator: user?.username || 'System',
-              snapshot_data: { old: oldBatch, updates }
+              snapshot_data: { old: oldBatch, updates } // Full snapshot for undo
           });
       }
   }
@@ -589,9 +591,26 @@ class DataService {
       // A Level: Undo Any (No check needed)
 
       await this.logClientAction('UNDO_TRANSACTION', { transactionId });
-      await client.from('transactions').update({ is_undone: true }).eq('id', transactionId);
-
-      if (['IN', 'OUT', 'IMPORT', 'RESTORE'].includes(tx.type)) {
+      
+      // Handle different types
+      if (tx.type === 'ADJUST') {
+          // Snapshot Rollback Strategy
+          const oldData = tx.snapshot_data?.old;
+          if (oldData) {
+              // Be careful not to overwrite IDs or unrelated fields if schema drifted, 
+              // but for this app assuming stability. 
+              // We remove 'id' from update payload to be safe.
+              const { id, ...updatePayload } = oldData;
+              
+              if (tx.batch_id) {
+                  await client.from('batches').update(updatePayload).eq('id', tx.batch_id);
+              } else if (tx.product_id) {
+                  await client.from('products').update(updatePayload).eq('id', tx.product_id);
+              }
+          } else {
+               throw new Error("无法撤销：缺少原始数据快照");
+          }
+      } else if (['IN', 'OUT', 'IMPORT', 'RESTORE'].includes(tx.type)) {
           const inverseQty = -tx.quantity; 
           const { error } = await client.rpc('operate_stock', {
               p_batch_id: tx.batch_id,
@@ -604,6 +623,7 @@ class DataService {
           if (error) throw new Error(error.message);
       } 
       else if (tx.type === 'DELETE') {
+          // Soft Delete Restore
           if (tx.batch_id) {
               await client.from('batches').update({ is_archived: false }).eq('id', tx.batch_id);
           }
@@ -611,6 +631,9 @@ class DataService {
               await client.from('products').update({ is_archived: false }).eq('id', tx.product_id);
           }
       }
+
+      // Mark as undone
+      await client.from('transactions').update({ is_undone: true }).eq('id', transactionId);
   }
 }
 

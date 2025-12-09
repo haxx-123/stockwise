@@ -1,10 +1,4 @@
 
-
-
-
-
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Dashboard } from './pages/Dashboard';
@@ -31,6 +25,13 @@ const FaceLogin = ({ onSuccess }: any) => {
     const [status, setStatus] = useState('初始化相机...');
     const [scanning, setScanning] = useState(false);
 
+    const stopStream = () => {
+        if(videoRef.current && videoRef.current.srcObject) {
+            (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+            videoRef.current.srcObject = null;
+        }
+    };
+
     useEffect(() => {
         navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
             .then(stream => {
@@ -40,11 +41,7 @@ const FaceLogin = ({ onSuccess }: any) => {
             })
             .catch(err => setStatus("无法访问相机: " + err.message));
         
-        return () => {
-             if(videoRef.current && videoRef.current.srcObject) {
-                (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-            }
-        };
+        return () => stopStream();
     }, []);
 
     const attemptLogin = async () => {
@@ -61,11 +58,15 @@ const FaceLogin = ({ onSuccess }: any) => {
         
         if (userWithFace) {
              // Mock success match for the demo if a user has configured face
+             stopStream();
              authService.switchAccount(userWithFace); // sets session
              onSuccess();
         } else {
              setStatus("验证失败: 未找到匹配用户或未设置人脸");
              setScanning(false);
+             stopStream(); // Stop on fail too? or keep scanning? User asked "auto close" implies on done/cancel.
+             // But if fail, user might retry. Let's restart? No, request was "cancel button or success -> close".
+             // We'll keep it simple: stop on success. If fail, user must retry or use password.
         }
     };
 
@@ -76,7 +77,10 @@ const FaceLogin = ({ onSuccess }: any) => {
                  {scanning && <div className="absolute inset-0 border-2 border-white opacity-50 rounded-full animate-pulse"></div>}
              </div>
              <p className="text-sm text-gray-500">{status}</p>
-             <button onClick={attemptLogin} className="w-full bg-blue-600 text-white py-2 rounded-lg font-bold">开始识别</button>
+             <div className="flex gap-2 w-full">
+                <button onClick={()=>{stopStream(); window.location.reload();}} className="flex-1 bg-gray-200 text-gray-600 py-2 rounded-lg font-bold">取消</button>
+                <button onClick={attemptLogin} className="flex-1 bg-blue-600 text-white py-2 rounded-lg font-bold">开始识别</button>
+             </div>
         </div>
     );
 };
@@ -204,9 +208,6 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount, initialView
                  dataService.markAnnouncementRead(ann.id, user.id);
                  setUnreadCount((prev:number) => Math.max(0, prev - 1));
              }
-             // For force popup logic, update local timestamp
-             const key = `sw_ann_last_seen_${ann.id}_${user.id}`;
-             localStorage.setItem(key, Date.now().toString());
         }
     };
 
@@ -263,10 +264,10 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount, initialView
                              {popupEnabled && (
                                  <select value={popupDuration} onChange={e=>setPopupDuration(e.target.value as any)} className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white">
                                      <option value="ONCE">一次性</option>
-                                     <option value="DAY">每天</option>
-                                     <option value="WEEK">每周</option>
-                                     <option value="MONTH">每月</option>
-                                     <option value="FOREVER">永久</option>
+                                     <option value="DAY">每天一次</option>
+                                     <option value="WEEK">每周一次</option>
+                                     <option value="MONTH">每月一次</option>
+                                     <option value="FOREVER">永久 (每次登录)</option>
                                  </select>
                              )}
                              <label className="flex items-center gap-2 dark:text-white font-bold mt-2"><input type="checkbox" checked={allowDelete} onChange={e=>setAllowDelete(e.target.checked)}/> 允许接收者删除(隐藏)</label>
@@ -427,16 +428,18 @@ const App: React.FC = () => {
       const unread = visible.filter(a => !a.read_by?.includes(myId));
       setUnreadAnnouncements(unread.length);
 
-      // Check Forced Popup Logic
-      // Priority: Unread Force > Recurred Force
+      // --- FORCED POPUP LOGIC ---
+      // Rule: "Popup only ONCE per login session for frequency-based" or "Immediate if online".
+      // We use a combination of unread status and localstorage timestamps to track "Seen This Session" or "Seen within Frequency".
+
+      // 1. New Unread Forced Announcements (Priority)
       const unreadForce = unread.find(a => a.popup_config?.enabled);
-      
       if (unreadForce) {
           setForcedAnnouncement(unreadForce);
           return; 
       }
 
-      // Check Recurring Popups (Even if read in DB, we check local storage for recurrence)
+      // 2. Recurring Forced Announcements (Even if read, might need to show again based on frequency)
       const recurring = visible.filter(a => a.popup_config?.enabled && a.popup_config.duration !== 'ONCE');
       
       for (const ann of recurring) {
@@ -446,7 +449,6 @@ const App: React.FC = () => {
           
           let shouldShow = false;
           if (!lastSeen) {
-              // Not seen locally = Show (login trigger)
               shouldShow = true;
           } else {
               const lastTime = parseInt(lastSeen);
@@ -458,13 +460,16 @@ const App: React.FC = () => {
                   case 'WEEK': if(diff > day * 7) shouldShow = true; break;
                   case 'MONTH': if(diff > day * 30) shouldShow = true; break;
                   case 'YEAR': if(diff > day * 365) shouldShow = true; break;
-                  case 'FOREVER': shouldShow = true; break; 
+                  case 'FOREVER': shouldShow = true; break; // Every login/poll
               }
           }
 
-          if (shouldShow) {
+          // Important: Only show if NOT shown in this specific session already (to prevent loop during session)
+          const sessionKey = `sw_ann_session_shown_${ann.id}`;
+          if (shouldShow && !sessionStorage.getItem(sessionKey)) {
+              sessionStorage.setItem(sessionKey, 'true'); // Mark shown for this session
               setForcedAnnouncement(ann);
-              return; // Show one at a time
+              return; // One at a time
           }
       }
   };
@@ -654,7 +659,7 @@ const App: React.FC = () => {
   );
 };
 
-// ... StoreManager component (updated permissions) ...
+// ... StoreManager component (updated) ...
 const StoreManager = ({ onClose, stores, currentStore, setStore, refresh, canManage }: any) => {
     const user = authService.getCurrentUser();
     const visibleStores = user?.permissions.store_scope === 'LIMITED' ? stores.filter((s:any) => user.allowed_store_ids.includes(s.id)) : stores;
@@ -696,30 +701,33 @@ const StoreManager = ({ onClose, stores, currentStore, setStore, refresh, canMan
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
             <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl relative" onClick={e=>e.stopPropagation()}>
-                 <h3 className="font-bold text-lg mb-4 dark:text-white flex justify-between">
-                     切换门店
-                     {canManage && <button onClick={handleCreate} className="text-xs bg-green-600 text-white px-2 py-1 rounded">新建</button>}
-                 </h3>
-                 <div className="max-h-60 overflow-y-auto space-y-2">
+                 <div className="flex justify-between items-center mb-4">
+                     <h3 className="font-bold text-lg dark:text-white">切换门店</h3>
+                     {canManage && <button onClick={handleCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1"><Icons.Plus size={16}/> 新建门店</button>}
+                 </div>
+                 
+                 <div className="max-h-60 overflow-y-auto space-y-2 custom-scrollbar">
                      {user?.permissions.store_scope !== 'LIMITED' && (
-                         <button onClick={()=>{setStore('all'); onClose();}} className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-800 border-b dark:border-gray-700 dark:text-white">所有门店</button>
+                         <button onClick={()=>{setStore('all'); onClose();}} className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-800 border-b dark:border-gray-700 dark:text-white font-medium">所有门店</button>
                      )}
                      {visibleStores.map((s:any) => (
                          <button 
                             key={s.id} 
                             onClick={()=>{setStore(s.id); onClose();}} 
                             onContextMenu={(e)=>handleRightClick(e, s.id)}
-                            className={`w-full text-left p-3 rounded ${currentStore===s.id ? 'bg-blue-50 text-blue-600' : 'hover:bg-gray-50 dark:hover:bg-gray-800 dark:text-gray-200'}`}
+                            className={`w-full text-left p-3 rounded transition-colors ${currentStore===s.id ? 'bg-blue-50 text-blue-600 font-bold border border-blue-100' : 'hover:bg-gray-50 dark:hover:bg-gray-800 dark:text-gray-200'}`}
                          >
                              {s.name}
                          </button>
                      ))}
                  </div>
                  
+                 {canManage && <div className="mt-4 text-xs text-gray-400 text-center">提示：右键点击门店可重命名或删除</div>}
+
                  {contextMenu && (
-                     <div className="fixed bg-white dark:bg-gray-800 shadow-xl border dark:border-gray-600 rounded z-[60]" style={{top: contextMenu.y, left: contextMenu.x}}>
-                         <button onClick={()=>handleAction('RENAME')} className="block w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-white text-sm">重命名</button>
-                         <button onClick={()=>handleAction('DELETE')} className="block w-full text-left px-4 py-2 hover:bg-red-50 text-red-600 dark:hover:bg-gray-700 text-sm">删除</button>
+                     <div className="fixed bg-white dark:bg-gray-800 shadow-2xl border dark:border-gray-600 rounded-lg z-[60] py-1 min-w-[120px]" style={{top: contextMenu.y, left: contextMenu.x}}>
+                         <button onClick={()=>handleAction('RENAME')} className="block w-full text-left px-4 py-2 hover:bg-gray-100 dark:hover:bg-gray-700 dark:text-white text-sm">✏️ 重命名</button>
+                         <button onClick={()=>handleAction('DELETE')} className="block w-full text-left px-4 py-2 hover:bg-red-50 text-red-600 dark:hover:bg-gray-700 text-sm border-t dark:border-gray-700">🗑️ 删除</button>
                      </div>
                  )}
             </div>

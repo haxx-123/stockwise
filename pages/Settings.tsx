@@ -1,10 +1,4 @@
 
-
-
-
-
-
-
 import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -38,13 +32,13 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT
     const sqlScript = `
--- STOCKWISE V2.5 MIGRATION SCRIPT
+-- STOCKWISE V2.6 MIGRATION SCRIPT
 -- SQL是/否较上一次发生更改: 是
 -- SQL是/否必须包含重置数据库: 否
 
 DO $$ 
 BEGIN 
-    -- 1. Schema Updates
+    -- 1. Schema Updates (Soft Delete & Features)
     IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='stores' AND column_name='is_archived') THEN
         ALTER TABLE stores ADD COLUMN is_archived boolean default false;
     END IF;
@@ -63,7 +57,6 @@ BEGIN
     END IF;
 
     -- 2. Initialization User
-    -- Insert only if not exists (check username)
     IF NOT EXISTS (SELECT 1 FROM users WHERE username = '初始化') THEN
         INSERT INTO users (id, username, password, role_level, permissions, allowed_store_ids, is_archived)
         VALUES (
@@ -90,7 +83,7 @@ BEGIN
 
 END $$;
 
--- Triggers (Idempotent)
+-- Triggers for Audit (Idempotent)
 create or replace function log_audit_trail() returns trigger as $$
 begin
   if (TG_OP = 'DELETE') then
@@ -149,7 +142,13 @@ $$ language plpgsql;
                         </div>
                         <div className="w-full">
                             <label className="block text-sm font-medium mb-2">Supabase Anon Key</label>
-                            <input type="password" value={configKey} onChange={(e) => setConfigKey(e.target.value)} className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white break-all" />
+                            <input 
+                                type="password" 
+                                value={configKey} 
+                                onChange={(e) => setConfigKey(e.target.value)} 
+                                onCopy={(e) => e.preventDefault()} // Prevent Copy
+                                className="w-full rounded-lg border dark:border-gray-600 dark:bg-gray-800 p-3 outline-none dark:text-white break-all select-none" 
+                            />
                         </div>
                         
                         <div className="w-full">
@@ -190,6 +189,13 @@ const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const [status, setStatus] = useState('初始化相机...');
 
+    const stopStream = () => {
+        if(videoRef.current && videoRef.current.srcObject) {
+            (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+            videoRef.current.srcObject = null;
+        }
+    };
+
     useEffect(() => {
         navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
             .then(stream => {
@@ -197,11 +203,7 @@ const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
                 setStatus("请将脸部对准摄像头");
             })
             .catch(err => setStatus("相机访问失败: " + err.message));
-        return () => {
-            if(videoRef.current && videoRef.current.srcObject) {
-                (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-            }
-        };
+        return () => stopStream();
     }, []);
 
     const capture = async () => {
@@ -213,8 +215,8 @@ const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
         const base64 = canvas.toDataURL('image/jpeg', 0.8);
         
         setStatus("正在录入...");
-        // In a real app, send to Face API to get descriptor. Here we save the image as the descriptor for simulation.
         await dataService.updateUser(user.id, { face_descriptor: base64 });
+        stopStream();
         onSuccess();
     };
 
@@ -227,7 +229,7 @@ const FaceSetup = ({ user, onSuccess, onCancel }: any) => {
                 </div>
                 <p className="text-sm text-gray-500">{status}</p>
                 <div className="flex gap-4 w-full">
-                    <button onClick={onCancel} className="flex-1 py-2 text-gray-500">取消</button>
+                    <button onClick={() => {stopStream(); onCancel();}} className="flex-1 py-2 text-gray-500">取消</button>
                     <button onClick={capture} className="flex-1 py-2 bg-blue-600 text-white rounded font-bold">录入人脸</button>
                 </div>
             </div>

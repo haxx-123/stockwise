@@ -1,13 +1,6 @@
-
-
-
-
-
-
-
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../services/dataService';
-import { Transaction, User } from '../types';
+import { Transaction, User, RoleLevel } from '../types';
 import { Icons } from '../components/Icons';
 import { authService } from '../services/authService';
 import { getUserColor, getLogColor } from '../utils/formatters';
@@ -18,7 +11,7 @@ export const Logs: React.FC = () => {
     const [page, setPage] = useState(1);
     const PAGE_SIZE = 15;
     const [detailLog, setDetailLog] = useState<Transaction | null>(null);
-    const [userMap, setUserMap] = useState<Map<string, number>>(new Map());
+    const [userMap, setUserMap] = useState<Map<string, RoleLevel>>(new Map());
 
     useEffect(() => { loadLogs(); setPage(1); }, [filter]);
 
@@ -30,7 +23,7 @@ export const Logs: React.FC = () => {
             ]);
             
             // Build User Map for Colors
-            const uMap = new Map<string, number>();
+            const uMap = new Map<string, RoleLevel>();
             users.forEach(u => uMap.set(u.username, u.role_level));
             setUserMap(uMap);
 
