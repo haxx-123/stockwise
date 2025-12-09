@@ -245,20 +245,21 @@ const PermissionMatrix: React.FC<PermissionMatrixProps> = ({ userId, initialUser
                 {/* Card 1: Log Permissions */}
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 shadow-sm">
                     <h3 className="font-bold dark:text-white mb-3 flex items-center gap-2"><Icons.Sparkles size={16}/> 日志权限 (Log Level)</h3>
-                    <div className="space-y-2">
+                    {/* Horizontal scroll container for mobile "sliding wheel" effect */}
+                    <div className="flex md:flex-col gap-3 overflow-x-auto pb-2 md:pb-0 snap-x hide-scrollbar md:overflow-visible">
                         {[
                             { val: 'A', label: 'A级: 查看所有 + 任意撤销 (最高)' },
                             { val: 'B', label: 'B级: 查看所有 + 仅撤销低等级' },
                             { val: 'C', label: 'C级: 查看所有 + 仅撤销自己' },
                             { val: 'D', label: 'D级: 仅查看自己 + 仅撤销自己' },
                         ].map(opt => (
-                            <label key={opt.val} className={`flex items-center gap-2 cursor-pointer p-2 rounded transition-all duration-200 ${localPerms.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 shadow-sm transform scale-[1.02]' : 'hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
+                            <label key={opt.val} className={`min-w-[85%] md:min-w-0 snap-center flex items-center gap-2 cursor-pointer p-2 rounded transition-all duration-200 shrink-0 border md:border-transparent ${localPerms.logs_level === opt.val ? 'bg-blue-100 dark:bg-blue-900/30 border-blue-200 dark:border-blue-800 shadow-sm transform scale-[1.02]' : 'bg-white md:bg-transparent dark:bg-gray-700/50 md:dark:bg-transparent border-gray-100 dark:border-gray-700 hover:bg-gray-200 dark:hover:bg-gray-700'}`}>
                                 <input 
                                    type="radio" 
                                    name="logs_level" 
                                    checked={localPerms.logs_level === opt.val} 
                                    onChange={() => handleUpdate('logs_level', opt.val)}
-                                   className="accent-blue-500 w-4 h-4"
+                                   className="accent-blue-500 w-4 h-4 ml-2 md:ml-0"
                                 />
                                 <span className={`text-sm ${localPerms.logs_level === opt.val ? 'text-blue-700 dark:text-blue-300 font-bold' : 'text-gray-600 dark:text-gray-400'}`}>{opt.label}</span>
                             </label>
@@ -270,15 +271,15 @@ const PermissionMatrix: React.FC<PermissionMatrixProps> = ({ userId, initialUser
                 <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg border dark:border-gray-700 shadow-sm space-y-6">
                     <div>
                         <h3 className="font-bold dark:text-white mb-3">公告权限</h3>
-                        <div className="flex gap-4">
-                            <label className="flex items-center gap-2 cursor-pointer group">
+                        <div className="flex gap-4 overflow-x-auto pb-2 md:pb-0">
+                            <label className="flex items-center gap-2 cursor-pointer group shrink-0">
                                 <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${localPerms.announcement_rule === 'PUBLISH' ? 'border-blue-500 bg-blue-500' : 'border-gray-400'}`}>
                                     {localPerms.announcement_rule === 'PUBLISH' && <div className="w-2 h-2 bg-white rounded-full"></div>}
                                 </div>
                                 <input type="radio" className="hidden" checked={localPerms.announcement_rule === 'PUBLISH'} onChange={() => handleUpdate('announcement_rule', 'PUBLISH')} />
                                 <span className={`text-sm ${localPerms.announcement_rule === 'PUBLISH' ? 'font-bold text-blue-600 dark:text-blue-400' : 'dark:text-gray-300'}`}>发布 & 接收</span>
                             </label>
-                            <label className="flex items-center gap-2 cursor-pointer group">
+                            <label className="flex items-center gap-2 cursor-pointer group shrink-0">
                                 <div className={`w-4 h-4 rounded-full border flex items-center justify-center ${localPerms.announcement_rule === 'VIEW' ? 'border-blue-500 bg-blue-500' : 'border-gray-400'}`}>
                                     {localPerms.announcement_rule === 'VIEW' && <div className="w-2 h-2 bg-white rounded-full"></div>}
                                 </div>
@@ -289,12 +290,12 @@ const PermissionMatrix: React.FC<PermissionMatrixProps> = ({ userId, initialUser
                     </div>
                     <div>
                         <h3 className="font-bold dark:text-white mb-3">门店范围策略</h3>
-                        <div className="flex gap-4 mb-2 items-center">
-                            <label className="flex items-center gap-2 cursor-pointer">
+                        <div className="flex gap-4 mb-2 items-center overflow-x-auto pb-2 md:pb-0">
+                            <label className="flex items-center gap-2 cursor-pointer shrink-0">
                                 <input type="radio" checked={localPerms.store_scope === 'GLOBAL'} onChange={() => handleUpdate('store_scope', 'GLOBAL')} className="accent-blue-500"/>
                                 <span className="text-sm dark:text-gray-300">全局 (Global)</span>
                             </label>
-                            <label className="flex items-center gap-2 cursor-pointer">
+                            <label className="flex items-center gap-2 cursor-pointer shrink-0">
                                 <input type="radio" checked={localPerms.store_scope === 'LIMITED'} onChange={() => handleUpdate('store_scope', 'LIMITED')} className="accent-blue-500"/>
                                 <span className="text-sm dark:text-gray-300">受限</span>
                             </label>
@@ -409,8 +410,11 @@ const PermissionsSettings = () => {
         if (user) {
             // Logic: Can modify Self. Can Create Peer. Cannot Modify Peer (unless self).
             if (currentUser && user.role_level === currentUser.role_level && user.id !== currentUser.id) {
-                alert("无权修改同级用户 (仅可查看/删除/新建)");
-                return;
+                // EXCEPTION: 00 Admin can modify other 00 Admins
+                if (currentUser.role_level !== 0) {
+                    alert("无权修改同级用户 (仅可查看/删除/新建)");
+                    return;
+                }
             }
             if (currentUser && user.role_level < currentUser.role_level) {
                  alert("无权修改上级用户");

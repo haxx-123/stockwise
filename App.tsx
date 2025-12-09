@@ -95,7 +95,13 @@ const LoginScreen = ({ onLogin }: any) => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (await authService.login(user, pass)) onLogin(); else setError("用户名或密码错误");
+        if (await authService.login(user, pass)) {
+            // onLogin(); 
+            // 自动刷新页面以确保状态完全重置和最新
+            window.location.reload();
+        } else {
+            setError("用户名或密码错误");
+        }
     };
 
     return (
@@ -120,7 +126,7 @@ const LoginScreen = ({ onLogin }: any) => {
                     </form>
                 ) : (
                     <div className="animate-fade-in">
-                        <FaceLogin onSuccess={onLogin} />
+                        <FaceLogin onSuccess={() => window.location.reload()} />
                     </div>
                 )}
             </div>
