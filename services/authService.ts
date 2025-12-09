@@ -1,5 +1,4 @@
 
-
 import { User, RoleLevel, UserPermissions } from '../types';
 import { dataService } from './dataService';
 
@@ -99,6 +98,7 @@ class AuthService {
         if (this.currentUser) dataService.logClientAction('LOGOUT', { username: this.currentUser.username });
         this.currentUser = null;
         sessionStorage.removeItem(this.SESSION_KEY);
+        sessionStorage.clear(); // Clear all session flags (e.g., popup viewed)
         window.location.reload();
     }
 

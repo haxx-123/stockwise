@@ -178,7 +178,8 @@ class DataService {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       
-      // Strict Constraint: Check aggregated stock for this store
+      // Strict Constraint: Check aggregated stock for this store across all ACTIVE batches
+      // We sum up the quantity of all batches belonging to this store that are not archived.
       const { data: batches } = await client.from('batches')
           .select('quantity')
           .eq('store_id', id)
@@ -186,7 +187,9 @@ class DataService {
       
       const totalStock = batches?.reduce((acc, b) => acc + b.quantity, 0) || 0;
       
-      if (totalStock > 0) throw new Error(`该门店下仍有 ${totalStock} 件库存，无法删除。必须库存归零才允许删除。`);
+      if (totalStock > 0) {
+          throw new Error(`该门店下仍有 ${totalStock} 件库存，无法删除。必须库存归零才允许删除。`);
+      }
 
       await this.logClientAction('DELETE_STORE', { id });
       // Soft Delete

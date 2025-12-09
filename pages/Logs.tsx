@@ -1,9 +1,11 @@
+
 import React, { useState, useEffect } from 'react';
 import { dataService } from '../services/dataService';
 import { Transaction, User, RoleLevel } from '../types';
 import { Icons } from '../components/Icons';
 import { authService } from '../services/authService';
-import { getUserColor, getLogColor } from '../utils/formatters';
+import { getLogColor } from '../utils/formatters';
+import { UsernameBadge } from '../components/UsernameBadge';
 
 export const Logs: React.FC = () => {
     const [logs, setLogs] = useState<Transaction[]>([]);
@@ -93,7 +95,7 @@ export const Logs: React.FC = () => {
                         {paginatedLogs.map(log => (
                             <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                                 <td className="p-4 text-gray-500">{new Date(log.timestamp).toLocaleString()}</td>
-                                <td className={`p-4 ${getUserColor(userMap.get(log.operator || ''))}`}>{log.operator}</td>
+                                <td className="p-4"><UsernameBadge name={log.operator || '未知'} roleLevel={userMap.get(log.operator || '') || 9} /></td>
                                 <td className="p-4"><span className={`px-2 py-1 rounded text-xs font-bold ${getLogColor(log.type)}`}>{typeLabel(log.type)}</span></td>
                                 <td className="p-4">{renderContent(log)}</td>
                                 <td className="p-4 text-right">{renderQty(log)}</td>
@@ -117,7 +119,7 @@ export const Logs: React.FC = () => {
                         </div>
                         <div className="flex flex-col items-end">
                             {renderQty(log)}
-                            <span className={`text-xs ${getUserColor(userMap.get(log.operator || ''))}`}>{log.operator}</span>
+                            <UsernameBadge name={log.operator || '未知'} roleLevel={userMap.get(log.operator || '') || 9} />
                         </div>
                     </div>
                 ))}
@@ -142,7 +144,7 @@ export const Logs: React.FC = () => {
                         <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl border dark:border-gray-700">
                              <div className="grid grid-cols-2 gap-4 text-sm dark:text-gray-300">
                                  <div><label className="block text-gray-500 text-xs">时间</label>{new Date(detailLog.timestamp).toLocaleString()}</div>
-                                 <div><label className="block text-gray-500 text-xs">操作人</label><span className={getUserColor(userMap.get(detailLog.operator||''))}>{detailLog.operator}</span></div>
+                                 <div><label className="block text-gray-500 text-xs">操作人</label><UsernameBadge name={detailLog.operator || '未知'} roleLevel={userMap.get(detailLog.operator || '') || 9} /></div>
                                  <div><label className="block text-gray-500 text-xs">类型</label><span className={`px-2 py-0.5 rounded ${getLogColor(detailLog.type)}`}>{typeLabel(detailLog.type)}</span></div>
                                  <div><label className="block text-gray-500 text-xs">数量变动</label>{renderQty(detailLog)}</div>
                              </div>

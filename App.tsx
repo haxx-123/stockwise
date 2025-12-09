@@ -15,6 +15,7 @@ import { isConfigured } from './services/supabaseClient';
 import { generatePageSummary, formatUnit } from './utils/formatters';
 import { authService } from './services/authService';
 import { RichTextEditor } from './components/RichTextEditor';
+import { UsernameBadge } from './components/UsernameBadge';
 
 declare const window: any;
 declare const html2canvas: any;
@@ -65,7 +66,6 @@ const FaceLogin = ({ onSuccess }: any) => {
              setStatus("验证失败: 未找到匹配用户或未设置人脸");
              setScanning(false);
              stopStream(); // Stop on fail too? or keep scanning? User asked "auto close" implies on done/cancel.
-             // But if fail, user might retry. Let's restart? No, request was "cancel button or success -> close".
              // We'll keep it simple: stop on success. If fail, user must retry or use password.
         }
     };
@@ -257,7 +257,7 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount, initialView
                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                          <div className="border p-4 rounded h-40 overflow-y-auto dark:border-gray-600 custom-scrollbar">
                             <label className="block font-bold mb-2 dark:text-white">接收对象 (不选则全员)</label>
-                            {users.map(u => <label key={u.id} className="block dark:text-gray-300"><input type="checkbox" onChange={e=>{const s=new Set(targetUsers); if(e.target.checked)s.add(u.id); else s.delete(u.id); setTargetUsers(s)}}/> {u.username}</label>)}
+                            {users.map(u => <label key={u.id} className="block dark:text-gray-300 flex items-center gap-2"><input type="checkbox" onChange={e=>{const s=new Set(targetUsers); if(e.target.checked)s.add(u.id); else s.delete(u.id); setTargetUsers(s)}}/> <UsernameBadge name={u.username} roleLevel={u.role_level}/></label>)}
                          </div>
                          <div className="space-y-4 border p-4 rounded dark:border-gray-600">
                              <label className="flex items-center gap-2 dark:text-white font-bold"><input type="checkbox" checked={popupEnabled} onChange={e=>setPopupEnabled(e.target.checked)}/> 强制弹窗提醒</label>
@@ -306,7 +306,11 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount, initialView
                                         {deleteMode && a.allow_delete && <input type="checkbox" onClick={e=>e.stopPropagation()} onChange={e=>{const s=new Set(selectedToDelete); if(e.target.checked)s.add(a.id); else s.delete(a.id); setSelectedToDelete(s)}} className="w-5 h-5" />}
                                         <div className="flex-1">
                                             <div className="font-bold dark:text-white text-lg">{a.title}</div>
-                                            <div className="text-xs text-gray-400 mt-1">{new Date(a.created_at).toLocaleDateString()} - {a.creator}</div>
+                                            <div className="text-xs text-gray-400 mt-1 flex gap-2 items-center">
+                                                <span>{new Date(a.created_at).toLocaleDateString()}</span>
+                                                <span>-</span>
+                                                <UsernameBadge name={a.creator} roleLevel={9} /> {/* Creator role unknown here, default to black or pass creator object if available. For simplicity using 9. Ideally fetch user level. */}
+                                            </div>
                                         </div>
                                         <Icons.ChevronRight className="text-gray-300"/>
                                     </div>
@@ -429,20 +433,28 @@ const App: React.FC = () => {
       setUnreadAnnouncements(unread.length);
 
       // --- FORCED POPUP LOGIC ---
-      // Rule: "Popup only ONCE per login session for frequency-based" or "Immediate if online".
-      // We use a combination of unread status and localstorage timestamps to track "Seen This Session" or "Seen within Frequency".
-
-      // 1. New Unread Forced Announcements (Priority)
+      // PRIORITY 1: Check sessionStorage. If any popup viewed in this session, don't show again unless it's a new one.
+      // Actually requirement says "Once per login session".
+      
+      // 1. Unread Forced (Highest Priority)
       const unreadForce = unread.find(a => a.popup_config?.enabled);
       if (unreadForce) {
-          setForcedAnnouncement(unreadForce);
-          return; 
+          // Check if we already showed THIS specific announcement in this session
+          if (!sessionStorage.getItem(`hasViewedPopup_${unreadForce.id}`)) {
+               setForcedAnnouncement(unreadForce);
+               // Mark as shown immediately to prevent loop if user keeps it open or something, 
+               // but typically we mark on close. Here we mark on trigger to be safe.
+               sessionStorage.setItem(`hasViewedPopup_${unreadForce.id}`, 'true');
+               return; 
+          }
       }
 
-      // 2. Recurring Forced Announcements (Even if read, might need to show again based on frequency)
+      // 2. Recurring Forced (Even if read)
       const recurring = visible.filter(a => a.popup_config?.enabled && a.popup_config.duration !== 'ONCE');
       
       for (const ann of recurring) {
+          if (sessionStorage.getItem(`hasViewedPopup_${ann.id}`)) continue; // Already seen in this session
+
           const lastSeenKey = `sw_ann_last_seen_${ann.id}_${myId}`;
           const lastSeen = localStorage.getItem(lastSeenKey);
           const now = Date.now();
@@ -460,15 +472,13 @@ const App: React.FC = () => {
                   case 'WEEK': if(diff > day * 7) shouldShow = true; break;
                   case 'MONTH': if(diff > day * 30) shouldShow = true; break;
                   case 'YEAR': if(diff > day * 365) shouldShow = true; break;
-                  case 'FOREVER': shouldShow = true; break; // Every login/poll
+                  case 'FOREVER': shouldShow = true; break; // Always show on new session
               }
           }
 
-          // Important: Only show if NOT shown in this specific session already (to prevent loop during session)
-          const sessionKey = `sw_ann_session_shown_${ann.id}`;
-          if (shouldShow && !sessionStorage.getItem(sessionKey)) {
-              sessionStorage.setItem(sessionKey, 'true'); // Mark shown for this session
+          if (shouldShow) {
               setForcedAnnouncement(ann);
+              sessionStorage.setItem(`hasViewedPopup_${ann.id}`, 'true');
               return; // One at a time
           }
       }
@@ -639,11 +649,13 @@ const App: React.FC = () => {
       {forcedAnnouncement && (
           <AnnouncementOverlay 
              onClose={() => {
-                 // Mark read locally to handle popup frequency
+                 // Mark read locally to handle popup frequency (Update local storage for time tracking)
                  if(user) {
                     const key = `sw_ann_last_seen_${forcedAnnouncement.id}_${user.id}`;
                     localStorage.setItem(key, Date.now().toString());
-                    // Also mark server read if not already
+                    // Session storage already set when showing
+                    
+                    // Also mark server read if not already (for Unread status logic)
                     if (!forcedAnnouncement.read_by?.includes(user.id)) {
                         dataService.markAnnouncementRead(forcedAnnouncement.id, user.id);
                     }
@@ -659,7 +671,7 @@ const App: React.FC = () => {
   );
 };
 
-// ... StoreManager component (updated) ...
+// ... StoreManager component (updated with Right Click & New Button) ...
 const StoreManager = ({ onClose, stores, currentStore, setStore, refresh, canManage }: any) => {
     const user = authService.getCurrentUser();
     const visibleStores = user?.permissions.store_scope === 'LIMITED' ? stores.filter((s:any) => user.allowed_store_ids.includes(s.id)) : stores;
@@ -700,7 +712,7 @@ const StoreManager = ({ onClose, stores, currentStore, setStore, refresh, canMan
 
     return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4" onClick={onClose}>
-            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl relative" onClick={e=>e.stopPropagation()}>
+            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl relative" onClick={e=>{e.stopPropagation(); setContextMenu(null);}}>
                  <div className="flex justify-between items-center mb-4">
                      <h3 className="font-bold text-lg dark:text-white">切换门店</h3>
                      {canManage && <button onClick={handleCreate} className="bg-green-600 hover:bg-green-700 text-white px-3 py-1.5 rounded-lg text-sm font-bold flex items-center gap-1"><Icons.Plus size={16}/> 新建门店</button>}

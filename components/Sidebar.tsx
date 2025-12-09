@@ -1,8 +1,8 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { Icons } from './Icons';
 import { authService } from '../services/authService';
+import { UsernameBadge } from './UsernameBadge';
 
 interface SidebarProps {
   currentPage: string;
@@ -119,7 +119,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
              {String(user?.role_level).padStart(2,'0')}
            </div>
            <div className="overflow-hidden">
-             <p className="font-bold text-gray-800 dark:text-gray-200 text-sm truncate">{user?.username}</p>
+             <UsernameBadge name={user?.username || ''} roleLevel={user?.role_level || 9} />
              <p className="text-gray-500 dark:text-gray-400 text-xs truncate">Level {String(user?.role_level).padStart(2,'0')}</p>
            </div>
         </div>

@@ -1,10 +1,4 @@
 
-
-
-
-
-
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
@@ -42,6 +36,7 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
     try {
       const [p, b, s] = await Promise.all([
         dataService.getProducts(false, currentStore),
+        // Important: If currentStore is 'all', getBatches returns batches from ALL stores.
         dataService.getBatches(currentStore === 'all' ? undefined : currentStore),
         dataService.getStores()
       ]);
@@ -80,14 +75,18 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
 
   const aggregatedData = useMemo(() => {
     const map = new Map<string, AggregatedStock>();
+    
+    // Initialize map with all products. Key is Product ID (Strict Level 1 Grouping)
     products.forEach(p => {
         if (!map.has(p.id)) map.set(p.id, { product: p, totalQuantity: 0, batches: [], expiringSoon: 0 });
     });
+
+    // Distribute batches to products
     batches.forEach(b => {
         if (map.has(b.product_id)) {
             const agg = map.get(b.product_id)!;
-            agg.totalQuantity += b.quantity;
-            agg.batches.push(b);
+            agg.totalQuantity += b.quantity; // Sum quantity regardless of store
+            agg.batches.push(b); // Batches are distinct rows (store info is inside batch object)
         }
     });
 
@@ -320,6 +319,7 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                                             <div className="flex-1 font-mono">
                                                                 <span className="text-purple-700 bg-purple-50 dark:bg-purple-900/30 dark:text-purple-300 px-1 rounded">{batch.batch_number}</span>
                                                             </div>
+                                                            {/* Store Name Logic: Only show if currentStore is all, but data is always present */}
                                                             {currentStore === 'all' && <div className="flex-1 text-gray-500 text-xs truncate font-bold text-blue-500">{batch.store_name}</div>}
                                                             <div className="flex-1 font-bold text-gray-800 dark:text-gray-200">{split.major}</div>
                                                             <div className="flex-1 text-gray-500">{split.minor}</div>

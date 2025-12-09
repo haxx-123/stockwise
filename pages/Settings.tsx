@@ -5,6 +5,7 @@ import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
 import { dataService } from '../services/dataService';
 import { User, Store, UserPermissions, RoleLevel, Announcement } from '../types';
 import { Icons } from '../components/Icons';
+import { UsernameBadge } from '../components/UsernameBadge';
 
 export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: string) => void }> = ({ subPage = 'config', onThemeChange }) => {
     const [configUrl, setConfigUrl] = useState('');
@@ -32,8 +33,8 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     
     // UPDATED SQL SCRIPT
     const sqlScript = `
--- STOCKWISE V2.6 MIGRATION SCRIPT
--- SQL是/否较上一次发生更改: 是
+-- STOCKWISE V2.7 MIGRATION SCRIPT
+-- SQL是/否较上一次发生更改: 否
 -- SQL是/否必须包含重置数据库: 否
 
 DO $$ 
@@ -315,7 +316,7 @@ const AccountSettings = () => {
                          {lowerUsers.length === 0 && <div className="p-4 text-center text-gray-400 text-sm">无下级账户</div>}
                          {lowerUsers.map(u => (
                              <button key={u.id} onClick={() => handleSwitch(u)} className="w-full text-left p-3 hover:bg-gray-50 dark:hover:bg-gray-800 border-b dark:border-gray-800 flex justify-between items-center group">
-                                 <span className="font-bold text-sm dark:text-white">{u.username}</span>
+                                 <UsernameBadge name={u.username} roleLevel={u.role_level} />
                                  <span className="text-xs bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded text-gray-500 dark:text-gray-300">Lv.{u.role_level}</span>
                              </button>
                          ))}
@@ -339,9 +340,16 @@ const PermissionsSettings = () => {
     const loadData = async () => {
         if (!currentUser) return;
         const [users, allStores] = await Promise.all([dataService.getUsers(), dataService.getStores()]);
+        
         let subs: User[] = [];
-        if (currentUser.permissions.view_peers) subs = users.filter(u => u.role_level >= currentUser.role_level);
-        else subs = users.filter(u => u.role_level > currentUser.role_level);
+        // Requirement: View Peers means can see them (and create new ones of same level), but only edit lower level? 
+        // Logic: Filter >= if view_peers, else >
+        if (currentUser.permissions.view_peers) {
+             subs = users.filter(u => u.role_level >= currentUser.role_level);
+        } else {
+             subs = users.filter(u => u.role_level > currentUser.role_level);
+        }
+        
         if (!currentUser.permissions.view_self_in_list) subs = subs.filter(u => u.id !== currentUser.id);
         setSubordinates(subs);
         setStores(allStores);
@@ -351,12 +359,22 @@ const PermissionsSettings = () => {
 
     const handleEdit = (user: User | null) => {
         if (user) {
+            // Edit existing
+            // Logic: Can only modify if strictly lower level OR self. 
+            // If view_peers is on, I can see peers but cannot modify them (unless self).
+            if (currentUser && user.role_level <= currentUser.role_level && user.id !== currentUser.id) {
+                alert("无权修改同级或上级用户 (仅可查看或创建)");
+                return;
+            }
             setEditingUser(user);
             setFormData(JSON.parse(JSON.stringify(user)));
         } else {
+            // Create New
             setEditingUser(null);
             setFormData({
-                username: '', password: '123', role_level: (currentUser?.role_level || 0) + 1 as RoleLevel,
+                username: '', password: '123', 
+                // If view_peers, default to current level, else current+1
+                role_level: (currentUser?.permissions.view_peers ? currentUser?.role_level : (currentUser?.role_level || 0) + 1) as RoleLevel,
                 permissions: JSON.parse(JSON.stringify(DEFAULT_PERMISSIONS)),
                 allowed_store_ids: []
             });
@@ -383,7 +401,24 @@ const PermissionsSettings = () => {
 
     const handleSave = async () => {
         if (!formData.username) return alert("用户名必填");
-        if (Number(formData.role_level) <= (currentUser?.role_level || 0) && currentUser?.role_level !== 0) return alert("只能创建/修改等级比自己低的用户");
+        
+        // Level validation
+        const inputLevel = Number(formData.role_level);
+        const myLevel = currentUser?.role_level || 0;
+        
+        if (editingUser) {
+             // Modification
+             // Already checked on open, but double check
+             if (inputLevel <= myLevel && editingUser.id !== currentUser?.id) {
+                 return alert("不能将用户等级提升至与您相同或更高");
+             }
+        } else {
+             // Creation
+             // If view_peers, can create >= myLevel? Usually peers implies same level. 
+             // Requirement: "Visible peers means can respectively modify self permissions and create new peer level users"
+             if (inputLevel < myLevel) return alert("不能创建比自己等级高的用户");
+        }
+
         try {
             if (editingUser) await dataService.updateUser(editingUser.id, formData);
             else await dataService.createUser(formData as any);
@@ -392,8 +427,11 @@ const PermissionsSettings = () => {
         } catch(e: any) { alert(e.message); }
     };
 
-    const handleDeleteUser = async (uid: string) => {
-        if(confirm("确定删除该用户？(软删除)")) { await dataService.deleteUser(uid); loadData(); }
+    const handleDeleteUser = async (u: User) => {
+        if (currentUser && u.role_level <= currentUser.role_level && u.id !== currentUser.id) {
+             return alert("无法删除同级或上级用户");
+        }
+        if(confirm("确定删除该用户？(软删除)")) { await dataService.deleteUser(u.id); loadData(); }
     };
 
     return (
@@ -419,13 +457,13 @@ const PermissionsSettings = () => {
                      <tbody className="divide-y dark:divide-gray-700">
                          {subordinates.map(u => (
                              <tr key={u.id} className="hover:bg-gray-50 dark:hover:bg-gray-800">
-                                 <td className="p-4 font-bold">{u.username}</td>
+                                 <td className="p-4"><UsernameBadge name={u.username} roleLevel={u.role_level} /></td>
                                  <td className="p-4"><span className="bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-xs font-mono">{u.role_level}</span></td>
                                  <td className="p-4"><span className="bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-200 px-2 py-1 rounded text-xs font-bold">{u.permissions.logs_level}级</span></td>
                                  <td className="p-4 text-sm">{u.permissions.store_scope === 'GLOBAL' ? '全局' : `受限 (${u.allowed_store_ids.length})`}</td>
                                  <td className="p-4 text-right space-x-2">
                                      <button onClick={() => handleEdit(u)} className="text-blue-600 font-bold hover:underline">编辑</button>
-                                     <button onClick={() => handleDeleteUser(u.id)} className="text-red-600 font-bold hover:underline">删除</button>
+                                     <button onClick={() => handleDeleteUser(u)} className="text-red-600 font-bold hover:underline">删除</button>
                                  </td>
                              </tr>
                          ))}
@@ -452,7 +490,18 @@ const PermissionsSettings = () => {
                                      )}
                                      <div><label className="block text-sm font-bold mb-1">用户名</label><input value={formData.username} onChange={e => handleChange('username', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
                                      <div><label className="block text-sm font-bold mb-1">密码</label><input value={formData.password} onChange={e => handleChange('password', e.target.value)} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
-                                     <div><label className="block text-sm font-bold mb-1">等级 (0-9)</label><input type="number" min={(currentUser?.role_level||0)+1} max="9" value={formData.role_level} onChange={e => handleChange('role_level', Number(e.target.value))} className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"/></div>
+                                     <div>
+                                         <label className="block text-sm font-bold mb-1">等级 (0-9)</label>
+                                         <input 
+                                             type="number" 
+                                             min={currentUser?.permissions.view_peers ? currentUser?.role_level : (currentUser?.role_level||0)+1} 
+                                             max="9" 
+                                             value={formData.role_level} 
+                                             onChange={e => handleChange('role_level', Number(e.target.value))} 
+                                             className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white"
+                                         />
+                                         <p className="text-xs text-gray-500 mt-1">您是等级 {currentUser?.role_level}，{currentUser?.permissions.view_peers ? '可以创建同级用户' : '只能创建更低等级用户'}</p>
+                                     </div>
                                  </div>
                              </div>
 
