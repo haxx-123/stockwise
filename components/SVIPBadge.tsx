@@ -16,13 +16,13 @@ export const SVIPBadge: React.FC<SVIPBadgeProps> = ({ name, roleLevel, className
     if (level === 0) {
         return (
             <div className={`relative overflow-hidden rounded-xl p-0.5 ${className}`}>
-                {/* Background: Vibrant Red Gradient 45deg */}
-                <div className="absolute inset-0 bg-[linear-gradient(45deg,#ef4444,#f472b6,#ec4899)] opacity-90"></div>
+                {/* Background: Vibrant Red Gradient 45deg (Red -> Pink -> HotPink) */}
+                <div className="absolute inset-0 bg-[linear-gradient(45deg,#ef4444,#ec4899,#db2777)] opacity-90"></div>
                 
                 <div className="relative bg-white/10 backdrop-blur-sm rounded-lg p-3 flex flex-col items-center justify-center border border-white/20">
                     {showRoleLabel && <span className="text-[10px] font-black tracking-widest text-white uppercase mb-1 drop-shadow-md">SVIP • 00</span>}
-                    {/* Name: Vibrant Purple Gradient Text */}
-                    <span className="text-xl font-bold bg-gradient-to-br from-purple-200 via-fuchsia-100 to-cyan-100 bg-clip-text text-transparent drop-shadow-[0_2px_2px_rgba(0,0,0,0.3)]">
+                    {/* Name: Vibrant Purple Gradient Text (Purple -> Pink -> Cyan) */}
+                    <span className="text-xl font-bold bg-[linear-gradient(45deg,#a855f7,#ec4899,#06b6d4)] bg-clip-text text-transparent drop-shadow-[0_1px_1px_rgba(255,255,255,0.2)]">
                         {name}
                     </span>
                 </div>

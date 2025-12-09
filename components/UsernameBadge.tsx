@@ -9,7 +9,6 @@ export const UsernameBadge = ({ name, roleLevel }: { name: string, roleLevel: Ro
     // Strict Color Rules
     if (level === 0) { 
         // 00: Vibrant Purple Text (Purple -> Pink -> Cyan 45deg)
-        // Note: The requirement for SVIP badge is specific, but for just text we use the vibrant purple requested.
         className += "bg-[linear-gradient(45deg,#a855f7,#ec4899,#06b6d4)] bg-clip-text text-transparent drop-shadow-[0_1px_1px_rgba(168,85,247,0.3)]";
     } else if (level === 1) { 
         // 01: Vibrant Gold Text (Gold -> Orange -> Yellow 45deg)
