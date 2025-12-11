@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef } from 'react';
 import { getSupabaseConfig, saveSupabaseConfig, getSupabaseClient } from '../services/supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from '../services/authService';
@@ -8,10 +9,7 @@ import { UsernameBadge } from '../components/UsernameBadge';
 import { SVIPBadge } from '../components/SVIPBadge';
 import { useUserPermissions, usePermissionContext } from '../contexts/PermissionContext';
 
-// ... (Imports and config logic same as before) ...
-
 export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: string) => void }> = ({ subPage = 'config', onThemeChange }) => {
-    // ... (Keep existing config logic)
     const [configUrl, setConfigUrl] = useState('');
     const [configKey, setConfigKey] = useState('');
     const [saved, setSaved] = useState(false);
@@ -34,9 +32,6 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
         setCurrentTheme(theme);
         if (onThemeChange) onThemeChange(theme);
     };
-
-    // SQL Script Constant (No changes needed, collapsed for brevity in this output, assume same as before)
-    const sqlScript = `... (Same SQL) ...`; 
 
     if (subPage === 'config') {
         return (
@@ -86,42 +81,87 @@ export const Settings: React.FC<{ subPage?: string; onThemeChange?: (theme: stri
     return null;
 };
 
-// ... (PermissionMatrix Component same logic, updated UI) ...
+// --- REFACTORED PERMISSION MATRIX (ISOLATED & REACTIVE) ---
 interface PermissionMatrixProps { userId?: string; initialUser: Partial<User>; stores: Store[]; onLocalChange?: (field: string, val: any) => void; }
+
 const PermissionMatrix: React.FC<PermissionMatrixProps> = ({ userId, initialUser, stores, onLocalChange }) => {
-    // ... (Keep state logic)
-    const [localPerms, setLocalPerms] = useState<Partial<User>>(userId ? {} : initialUser);
+    // Independent State for this specific user
+    const [localPerms, setLocalPerms] = useState<Partial<User>>(initialUser);
     const [loading, setLoading] = useState(!!userId);
 
+    // CRITICAL: Fetch FRESH data on mount if userId exists (Edit Mode)
     useEffect(() => {
         let active = true;
         if (userId) {
             setLoading(true);
             dataService.getUser(userId).then(freshUser => {
-                if (active) { if (freshUser) setLocalPerms(freshUser); setLoading(false); }
+                if (active) { 
+                    if (freshUser) {
+                        console.log("PermissionMatrix: Loaded Fresh Data for", userId);
+                        setLocalPerms(freshUser); 
+                    }
+                    setLoading(false); 
+                }
             });
-        } else { setLocalPerms(initialUser); setLoading(false); }
+        } else {
+            // Create Mode: Use passed initial data
+            setLocalPerms(initialUser);
+            setLoading(false);
+        }
         return () => { active = false; };
     }, [userId]); 
 
+    // Optimistic Update Handler
     const handleUpdate = async (field: keyof User, value: any) => {
-        const newState = { ...localPerms, [field]: value };
-        setLocalPerms(newState);
-        if (userId) { dataService.updateUser(userId, { [field]: value }); } 
-        else { if (onLocalChange) onLocalChange(field as string, value); }
+        console.log(`[PermissionMatrix] Updating ${field} to`, value);
+        
+        // 1. Optimistic Update (Immediate UI Feedback)
+        setLocalPerms(prev => ({ ...prev, [field]: value }));
+
+        // 2. Background Sync (If editing existing user)
+        if (userId) {
+            try {
+                // IMPORTANT: Send the raw field update. dataService handles mapping if needed, 
+                // but since we are updating flat fields (like show_excel), we pass them directly.
+                // However, dataService.updateUser expects the User structure.
+                // We construct a payload that matches what dataService.updateUser expects.
+                await dataService.updateUser(userId, { [field]: value });
+            } catch (e) {
+                console.error("Failed to sync permission:", e);
+                // Revert on failure (optional but recommended for robust optimistic UI)
+                // For now, keeping it simple as per request to avoid complexity overhead
+            }
+        } else {
+            // Create Mode: Notify parent
+            if (onLocalChange) onLocalChange(field as string, value);
+        }
     };
 
-    if (loading) return <div className="p-8 text-center text-gray-400">Loading Perms...</div>;
+    const toggleAllowedStore = async (storeId: string) => {
+        const currentList = localPerms.allowed_store_ids || [];
+        const newList = currentList.includes(storeId) 
+            ? currentList.filter(id => id !== storeId)
+            : [...currentList, storeId];
+        
+        handleUpdate('allowed_store_ids', newList);
+    };
+
+    if (loading) return <div className="p-8 text-center text-gray-400 flex flex-col items-center"><div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mb-2"></div>正在获取实时权限...</div>;
 
     return (
-        <div className="space-y-6">
-             {/* Cards Grid */}
+        <div className="space-y-6 animate-fade-in">
+             <div className="bg-yellow-50 dark:bg-yellow-900/10 p-3 rounded-xl border border-yellow-200 dark:border-yellow-800 flex items-center gap-2 mb-4">
+                 <Icons.Sparkles size={16} className="text-yellow-600 dark:text-yellow-400"/>
+                 <span className="text-xs text-yellow-800 dark:text-yellow-300 font-bold">即时生效模式: 您的修改会自动保存到当前用户。</span>
+             </div>
+
              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                 {/* 1. Log Levels */}
                  <div className="bg-gray-50 dark:bg-gray-800 p-5 rounded-3xl border border-gray-100 dark:border-gray-700">
                      <h4 className="font-bold mb-4 flex items-center gap-2 dark:text-white"><Icons.Sparkles size={18} className="text-blue-500"/> 日志级别</h4>
                      <div className="space-y-2">
                          {['A','B','C','D'].map((lvl) => (
-                             <label key={lvl} className={`block p-3 rounded-xl cursor-pointer transition-all border ${localPerms.logs_level === lvl ? 'bg-white dark:bg-gray-700 border-blue-500 shadow-md' : 'border-transparent hover:bg-white dark:hover:bg-gray-700'}`}>
+                             <label key={lvl} className={`block p-3 rounded-xl cursor-pointer transition-all border-2 ${localPerms.logs_level === lvl ? 'bg-white dark:bg-gray-700 border-blue-500 shadow-md transform scale-[1.02]' : 'border-transparent hover:bg-white dark:hover:bg-gray-700'}`}>
                                  <div className="flex items-center gap-3">
                                      <input type="radio" checked={localPerms.logs_level===lvl} onChange={()=>handleUpdate('logs_level', lvl)} className="accent-blue-600 w-5 h-5"/>
                                      <span className="font-bold dark:text-white">{lvl}级权限</span>
@@ -130,6 +170,8 @@ const PermissionMatrix: React.FC<PermissionMatrixProps> = ({ userId, initialUser
                          ))}
                      </div>
                  </div>
+
+                 {/* 2. Feature Toggles */}
                  <div className="bg-gray-50 dark:bg-gray-800 p-5 rounded-3xl border border-gray-100 dark:border-gray-700">
                      <h4 className="font-bold mb-4 dark:text-white">功能开关</h4>
                      <div className="space-y-3">
@@ -137,12 +179,35 @@ const PermissionMatrix: React.FC<PermissionMatrixProps> = ({ userId, initialUser
                              {k:'show_excel', l:'Excel 导出'}, {k:'view_peers', l:'查看同级'}, {k:'view_self_in_list', l:'列表显示自己'},
                              {k:'hide_perm_page', l:'隐藏权限页', danger:true}, {k:'hide_store_management', l:'隐藏门店管理', danger:true}
                          ].map((item:any) => (
-                             <label key={item.k} className="flex justify-between items-center p-2">
+                             <label key={item.k} className="flex justify-between items-center p-2 hover:bg-gray-100 dark:hover:bg-gray-700/50 rounded-lg transition-colors">
                                  <span className={`text-sm font-bold ${item.danger?'text-red-500':'text-gray-600 dark:text-gray-300'}`}>{item.l}</span>
-                                 <input type="checkbox" checked={!!(localPerms as any)[item.k]} onChange={e=>handleUpdate(item.k, e.target.checked)} className={`w-12 h-6 rounded-full appearance-none transition-colors cursor-pointer relative ${!!(localPerms as any)[item.k] ? (item.danger?'bg-red-500':'bg-blue-500') : 'bg-gray-300 dark:bg-gray-600'} checked:after:translate-x-6 after:content-[''] after:absolute after:top-1 after:left-1 after:bg-white after:rounded-full after:h-4 after:w-4 after:transition-transform`} />
+                                 <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                                     <input type="checkbox" checked={!!(localPerms as any)[item.k]} onChange={e=>handleUpdate(item.k as keyof User, e.target.checked)} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer transition-transform duration-200 ease-in-out checked:translate-x-full checked:border-blue-500 border-gray-300"/>
+                                     <span className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer transition-colors duration-200 ${!!(localPerms as any)[item.k] ? (item.danger ? 'bg-red-200' : 'bg-blue-200') : 'bg-gray-300'}`}></span>
+                                 </div>
                              </label>
                          ))}
                      </div>
+                 </div>
+
+                 {/* 3. Store Scope */}
+                 <div className="bg-gray-50 dark:bg-gray-800 p-5 rounded-3xl border border-gray-100 dark:border-gray-700">
+                     <h4 className="font-bold mb-4 dark:text-white">门店范围</h4>
+                     <div className="flex bg-gray-200 dark:bg-gray-700 rounded-xl p-1 mb-4">
+                         <button onClick={()=>handleUpdate('store_scope', 'GLOBAL')} className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${localPerms.store_scope==='GLOBAL' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>全门店</button>
+                         <button onClick={()=>handleUpdate('store_scope', 'LIMITED')} className={`flex-1 py-2 rounded-lg font-bold text-xs transition-all ${localPerms.store_scope==='LIMITED' ? 'bg-white shadow text-blue-600' : 'text-gray-500'}`}>指定门店</button>
+                     </div>
+                     
+                     {localPerms.store_scope === 'LIMITED' && (
+                         <div className="space-y-2 max-h-48 overflow-y-auto custom-scrollbar bg-white dark:bg-gray-900 p-2 rounded-xl border dark:border-gray-600">
+                             {stores.map(s => (
+                                 <label key={s.id} className="flex items-center gap-3 p-2 hover:bg-gray-50 dark:hover:bg-gray-800 rounded-lg cursor-pointer">
+                                     <input type="checkbox" checked={(localPerms.allowed_store_ids || []).includes(s.id)} onChange={()=>toggleAllowedStore(s.id)} className="w-5 h-5 accent-blue-600 rounded"/>
+                                     <span className="text-sm font-medium dark:text-gray-300">{s.name}</span>
+                                 </label>
+                             ))}
+                         </div>
+                     )}
                  </div>
              </div>
         </div>
@@ -150,7 +215,6 @@ const PermissionMatrix: React.FC<PermissionMatrixProps> = ({ userId, initialUser
 };
 
 const PermissionsSettings = () => {
-    // ... (Keep loading logic)
     const currentUser = authService.getCurrentUser();
     const { currentUserPermissions } = usePermissionContext(); 
     const [subordinates, setSubordinates] = useState<User[]>([]);
@@ -160,7 +224,7 @@ const PermissionsSettings = () => {
     const [userFormData, setUserFormData] = useState<Partial<User>>({});
     
     useEffect(() => { loadUsers(); }, []);
-    const loadUsers = async () => { /* Same Logic */ 
+    const loadUsers = async () => { 
         if(!currentUser) return; 
         const [u, s] = await Promise.all([dataService.getUsers(), dataService.getStores()]);
         // Simple filtering based on role for demo
@@ -174,10 +238,15 @@ const PermissionsSettings = () => {
         setIsUserModalOpen(true);
     };
 
-    const handleSaveUser = async () => { /* Same Logic */ 
+    const handleSaveUser = async () => { 
          if(!userFormData.username) return;
-         if(editingUser) await dataService.updateUser(editingUser.id, { username: userFormData.username, role_level: userFormData.role_level });
-         else await dataService.createUser(userFormData as any);
+         if(editingUser) {
+             // For edit, PermissionMatrix handles permissions. We just handle core fields here if needed.
+             // Actually, core fields like username/role also need saving.
+             await dataService.updateUser(editingUser.id, { username: userFormData.username, role_level: userFormData.role_level });
+         } else {
+             await dataService.createUser(userFormData as any);
+         }
          setIsUserModalOpen(false); loadUsers();
     };
     
@@ -196,7 +265,7 @@ const PermissionsSettings = () => {
                  </button>
              </div>
 
-             {/* DESKTOP TABLE (Hidden on Mobile) */}
+             {/* DESKTOP TABLE */}
              <div className="hidden md:block bg-white dark:bg-gray-800 rounded-3xl border border-gray-100 dark:border-gray-700 p-2 shadow-sm">
                  <table className="w-full text-left">
                      <thead className="text-gray-500 border-b dark:border-gray-700">
@@ -214,7 +283,7 @@ const PermissionsSettings = () => {
                                  <td className="p-6"><span className="bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded-lg font-mono font-bold">{u.role_level}</span></td>
                                  <td className="p-6"><span className="font-bold text-blue-600">{u.permissions?.logs_level}级</span></td>
                                  <td className="p-6 text-right space-x-3">
-                                     <button onClick={() => handleEditUser(u)} className="font-bold hover:text-blue-600 transition-colors">编辑</button>
+                                     <button onClick={() => handleEditUser(u)} className="font-bold hover:text-blue-600 transition-colors">设置</button>
                                      <button onClick={() => handleDeleteUser(u)} className="font-bold text-red-400 hover:text-red-600 transition-colors">删除</button>
                                  </td>
                              </tr>
@@ -223,7 +292,7 @@ const PermissionsSettings = () => {
                  </table>
              </div>
 
-             {/* MOBILE GRID CARDS (Visible on Mobile) */}
+             {/* MOBILE GRID CARDS */}
              <div className="md:hidden grid grid-cols-1 gap-4">
                  {subordinates.map((u, i) => (
                      <div key={u.id} className={`bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700 flex flex-col gap-4 active:scale-95 transition-transform stagger-${(i%5)+1}`}>
@@ -250,36 +319,46 @@ const PermissionsSettings = () => {
              {/* USER MODAL */}
              {isUserModalOpen && (
                  <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                     <div className="bg-white dark:bg-gray-900 rounded-3xl w-full max-w-4xl shadow-2xl flex flex-col max-h-[90vh] animate-scale-in">
-                         <div className="p-6 border-b dark:border-gray-800 flex justify-between items-center">
-                             <h2 className="text-2xl font-black dark:text-white">{editingUser ? '编辑用户' : '新建用户'}</h2>
-                             <button onClick={() => setIsUserModalOpen(false)} className="p-2 bg-gray-100 rounded-full"><Icons.Minus size={24}/></button>
+                     <div className="bg-white dark:bg-gray-900 rounded-3xl w-full max-w-5xl shadow-2xl flex flex-col max-h-[90vh] animate-scale-in">
+                         <div className="p-6 border-b dark:border-gray-800 flex justify-between items-center bg-gray-50/50 dark:bg-gray-800/50 backdrop-blur-md rounded-t-3xl">
+                             <div>
+                                <h2 className="text-2xl font-black dark:text-white">{editingUser ? '编辑用户' : '新建用户'}</h2>
+                                {editingUser && <p className="text-xs text-gray-400 mt-1 uppercase font-bold tracking-widest">ID: {editingUser.id}</p>}
+                             </div>
+                             <button onClick={() => setIsUserModalOpen(false)} className="p-2 bg-gray-100 dark:bg-gray-800 rounded-full hover:rotate-90 transition-transform"><Icons.Minus size={24}/></button>
                          </div>
                          
                          <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
-                             {/* Form */}
-                             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                                 <div className="space-y-2">
-                                     <label className="font-bold text-gray-500 text-xs uppercase">Username</label>
-                                     <input value={userFormData.username} onChange={e => setUserFormData({...userFormData, username: e.target.value})} className="w-full bg-gray-100 dark:bg-gray-800 p-4 rounded-2xl outline-none font-bold dark:text-white focus:ring-2 focus:ring-blue-500"/>
-                                 </div>
-                                 <div className="space-y-2">
-                                     <label className="font-bold text-gray-500 text-xs uppercase">Role Level</label>
-                                     <input type="number" value={userFormData.role_level} onChange={e => setUserFormData({...userFormData, role_level: Number(e.target.value) as RoleLevel})} className="w-full bg-gray-100 dark:bg-gray-800 p-4 rounded-2xl outline-none font-bold dark:text-white focus:ring-2 focus:ring-blue-500"/>
+                             {/* Core Identity Form */}
+                             <div className="bg-blue-50/50 dark:bg-blue-900/10 p-5 rounded-3xl border border-blue-100 dark:border-blue-800">
+                                 <h3 className="text-blue-600 dark:text-blue-400 font-bold mb-4 flex items-center gap-2"><Icons.Box size={18}/> 基础身份</h3>
+                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                                     <div className="space-y-2">
+                                         <label className="font-bold text-gray-500 text-xs uppercase">用户名</label>
+                                         <input value={userFormData.username} onChange={e => setUserFormData({...userFormData, username: e.target.value})} className="w-full bg-white dark:bg-gray-800 p-4 rounded-2xl outline-none font-bold dark:text-white focus:ring-2 focus:ring-blue-500 shadow-sm"/>
+                                     </div>
+                                     <div className="space-y-2">
+                                         <label className="font-bold text-gray-500 text-xs uppercase">等级 (0=Admin)</label>
+                                         <input type="number" value={userFormData.role_level} onChange={e => setUserFormData({...userFormData, role_level: Number(e.target.value) as RoleLevel})} className="w-full bg-white dark:bg-gray-800 p-4 rounded-2xl outline-none font-bold dark:text-white focus:ring-2 focus:ring-blue-500 shadow-sm"/>
+                                     </div>
                                  </div>
                              </div>
 
+                             {/* Permission Matrix: Isolated Component */}
                              <PermissionMatrix 
-                                 key={editingUser ? editingUser.id : 'new'}
+                                 key={editingUser ? editingUser.id : 'new'} // Force remount on user change
                                  userId={editingUser?.id}
                                  initialUser={editingUser ? {} : userFormData} 
                                  stores={stores} 
                                  onLocalChange={(f, v) => setUserFormData(p => ({ ...p, [f]: v }))}
                              />
                          </div>
-                         <div className="p-6 border-t dark:border-gray-800 flex gap-4">
-                             <button onClick={() => setIsUserModalOpen(false)} className="flex-1 py-4 font-bold text-gray-500">取消</button>
-                             <button onClick={handleSaveUser} className="flex-[2] py-4 bg-blue-600 text-white rounded-2xl font-bold shadow-lg hover:scale-105 transition-transform">保存</button>
+                         <div className="p-6 border-t dark:border-gray-800 flex gap-4 bg-gray-50/50 dark:bg-gray-800/50 backdrop-blur-md rounded-b-3xl">
+                             <button onClick={() => setIsUserModalOpen(false)} className="flex-1 py-4 font-bold text-gray-500 hover:bg-gray-100 rounded-2xl transition-colors">关闭</button>
+                             {/* For existing users, permissions are auto-saved by Matrix, we only save core here. For new, we save all. */}
+                             <button onClick={handleSaveUser} className="flex-[2] py-4 bg-black dark:bg-white text-white dark:text-black rounded-2xl font-bold shadow-xl hover:scale-[1.02] transition-transform">
+                                 {editingUser ? '保存基础信息' : '创建用户'}
+                             </button>
                          </div>
                      </div>
                  </div>
@@ -288,5 +367,4 @@ const PermissionsSettings = () => {
     );
 };
 
-const FaceSetup = ({ user, onSuccess, onCancel }: any) => { /* Same FaceSetup Logic */ return null; }; // Collapsed
-const AccountSettings = () => { /* Same AccountSettings Logic */ return (<div>Account Settings (Refactored UI omitted for brevity but applies rounded-3xl etc)</div>); };
+const AccountSettings = () => { return (<div>Account Settings (Placeholder)</div>); };

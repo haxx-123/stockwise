@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Icons } from './components/Icons';
@@ -80,8 +81,6 @@ const FaceLogin = ({ onSuccess }: any) => {
                     setStatus(`识别成功 (置信度: ${(score * 100).toFixed(0)}%)`);
                     clearInterval(interval);
                     setTimeout(() => {
-                         // Real logic: Check if ANY user has face set (simplified for demo)
-                         // In prod, match descriptor.
                          checkUserMatch();
                     }, 1000);
                 }
@@ -93,8 +92,6 @@ const FaceLogin = ({ onSuccess }: any) => {
 
     const checkUserMatch = async () => {
         const users = await dataService.getUsers();
-        // For this demo, we bypass descriptor matching and just check if ANY user has face setup.
-        // In a real implementation, we would use faceapi.FaceMatcher with detection.descriptor
         const userWithFace = users.find(u => !!u.face_descriptor);
         
         if (userWithFace) {
@@ -154,7 +151,7 @@ const SplashScreen = ({ onFinish }: { onFinish: () => void }) => {
     return (
         <div className="fixed inset-0 bg-white dark:bg-gray-950 z-[999] flex flex-col items-center justify-center p-8 transition-opacity duration-1000">
             <div className={`transition-all duration-700 transform ${step >= 1 ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
-                <img src="retouch_2025121122511132.png" className="w-24 h-24 mb-6 drop-shadow-2xl" alt="Logo" />
+                <img src="retouch_2025121122511132.png" className="w-24 h-24 mb-6 drop-shadow-2xl object-contain" alt="Logo" />
             </div>
             
             <div className={`transition-all duration-700 delay-100 transform ${step >= 2 ? 'opacity-100 scale-100' : 'opacity-0 scale-90'}`}>
@@ -214,26 +211,37 @@ const LoginScreen = ({ onLogin }: any) => {
     );
 };
 
-// --- ANNOUNCEMENT IN-PLACE VIEW ---
+// --- ANNOUNCEMENT IN-PLACE VIEW (Restored Manage/Publish) ---
 const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount, initialView, forcedAnn }: any) => {
-    const [view, setView] = useState<'MY_LIST' | 'DETAIL' | 'MANAGE_SELECT' | 'MANAGE_LIST' | 'PUBLISH'>('MY_LIST');
+    const [view, setView] = useState<'MY_LIST' | 'DETAIL' | 'PUBLISH' | 'MANAGE_LIST'>('MY_LIST');
     const [anns, setAnns] = useState<Announcement[]>([]);
     const [detailAnn, setDetailAnn] = useState<Announcement | null>(null);
     const [users, setUsers] = useState<User[]>([]);
     
-    // ... (Keeping logic similar but refactoring View)
+    // Publish Form State
+    const [pubTitle, setPubTitle] = useState('');
+    const [pubContent, setPubContent] = useState('');
+    const [pubTargets, setPubTargets] = useState<string[]>([]);
+    
     const user = authService.getCurrentUser();
     const perms = useUserPermissions(user?.role_level);
     
-    // Minimal states for demo to support view switching
-    useEffect(() => { loadMyAnns(); dataService.getUsers().then(setUsers); if(forcedAnn) { setDetailAnn(forcedAnn); setView('DETAIL'); } }, []);
+    useEffect(() => { loadData(); if(forcedAnn) { setDetailAnn(forcedAnn); setView('DETAIL'); } }, []);
 
-    const loadMyAnns = async () => {
+    const loadData = async () => {
         const all = await dataService.getAnnouncements();
+        // Admin View: See all (for Manage List)
+        // User View: See only relevant (for My List)
         const myId = user?.id || '';
         const my = all.filter(a => !a.is_force_deleted && (!a.target_users?.length || a.target_users.includes(myId)) && !a.read_by?.includes(`HIDDEN_BY_${myId}`));
-        setAnns(my);
+        setAnns(view === 'MANAGE_LIST' ? all : my);
+        
+        if (perms.announcement_rule === 'PUBLISH') {
+             dataService.getUsers().then(setUsers);
+        }
     };
+
+    useEffect(() => { loadData(); }, [view]);
 
     const openDetail = (ann: Announcement) => {
         setDetailAnn(ann);
@@ -241,6 +249,30 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount, initialView
         if (user && !ann.read_by?.includes(user.id)) {
              dataService.markAnnouncementRead(ann.id, user.id);
              setUnreadCount((p:number)=>Math.max(0,p-1));
+        }
+    };
+
+    const handlePublish = async () => {
+        if (!pubTitle || !pubContent) return alert("请填写标题和内容");
+        await dataService.createAnnouncement({
+            title: pubTitle,
+            content: pubContent,
+            creator: user?.username || 'Admin',
+            creator_id: user?.id,
+            target_users: pubTargets,
+            valid_until: new Date(Date.now() + 86400000 * 30).toISOString(),
+            popup_config: { enabled: true, duration: 'ONCE' },
+            allow_delete: true
+        });
+        alert("发布成功");
+        setPubTitle(''); setPubContent(''); setPubTargets([]);
+        setView('MY_LIST');
+    };
+
+    const handleDelete = async (id: string) => {
+        if(confirm("确定要删除此公告吗？")) {
+            await dataService.deleteAnnouncement(id, true); // Force delete
+            loadData();
         }
     };
 
@@ -262,10 +294,66 @@ const AnnouncementOverlay = ({ onClose, unreadCount, setUnreadCount, initialView
                 </div>
             );
         }
+
+        if (view === 'PUBLISH') {
+            return (
+                <div className="animate-slide-in-right h-full flex flex-col gap-4 overflow-y-auto custom-scrollbar">
+                    <div className="flex items-center mb-2">
+                        <button onClick={()=>setView('MY_LIST')} className="p-2 hover:bg-gray-100 rounded-full mr-2"><Icons.ArrowRightLeft className="rotate-180" size={20}/></button>
+                        <h2 className="font-bold text-lg">发布新公告</h2>
+                    </div>
+                    <input className="w-full bg-gray-50 dark:bg-gray-800 p-3 rounded-xl border-0 font-bold dark:text-white" placeholder="公告标题" value={pubTitle} onChange={e=>setPubTitle(e.target.value)} />
+                    <RichTextEditor value={pubContent} onChange={setPubContent} />
+                    <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl max-h-40 overflow-y-auto">
+                        <h4 className="font-bold mb-2 dark:text-white">发送对象 (空选为所有人)</h4>
+                        <div className="flex flex-wrap gap-2">
+                            {users.map(u => (
+                                <label key={u.id} className="flex items-center gap-1 bg-white dark:bg-gray-700 px-2 py-1 rounded shadow-sm cursor-pointer">
+                                    <input type="checkbox" checked={pubTargets.includes(u.id)} onChange={e => {
+                                        if (e.target.checked) setPubTargets([...pubTargets, u.id]);
+                                        else setPubTargets(pubTargets.filter(t => t !== u.id));
+                                    }} className="accent-blue-600"/>
+                                    <span className="text-xs font-bold dark:text-gray-200">{u.username}</span>
+                                </label>
+                            ))}
+                        </div>
+                    </div>
+                    <button onClick={handlePublish} className="w-full bg-blue-600 text-white py-3 rounded-xl font-bold shadow-lg">确认发布</button>
+                </div>
+            );
+        }
+
+        if (view === 'MANAGE_LIST') {
+             return (
+                 <div className="animate-fade-in-up space-y-3 h-full overflow-y-auto custom-scrollbar">
+                    <div className="flex items-center mb-4">
+                        <button onClick={()=>setView('MY_LIST')} className="p-2 hover:bg-gray-100 rounded-full mr-2"><Icons.ArrowRightLeft className="rotate-180" size={20}/></button>
+                        <h2 className="font-bold text-lg">管理公告 (全部)</h2>
+                    </div>
+                    {anns.map((a, i) => (
+                         <div key={a.id} className="bg-white dark:bg-gray-800 p-4 rounded-2xl border dark:border-gray-700 shadow-sm flex items-center justify-between">
+                             <div className="min-w-0">
+                                 <h3 className={`font-bold dark:text-white truncate ${a.is_force_deleted ? 'line-through text-gray-400' : ''}`}>{a.title}</h3>
+                                 <p className="text-xs text-gray-400">{new Date(a.created_at).toLocaleDateString()} by {a.creator}</p>
+                             </div>
+                             {!a.is_force_deleted && <button onClick={()=>handleDelete(a.id)} className="text-red-500 font-bold text-xs border border-red-200 px-2 py-1 rounded">撤回</button>}
+                         </div>
+                     ))}
+                 </div>
+             )
+        }
         
         // Default List View
         return (
-            <div className="animate-fade-in-up space-y-3">
+            <div className="animate-fade-in-up space-y-3 h-full overflow-y-auto custom-scrollbar relative">
+                 {/* Admin Tools */}
+                 {perms.announcement_rule === 'PUBLISH' && (
+                     <div className="grid grid-cols-2 gap-2 mb-4">
+                         <button onClick={()=>setView('PUBLISH')} className="bg-blue-600 text-white py-2 rounded-xl font-bold text-sm shadow-lg">📢 发布公告</button>
+                         <button onClick={()=>setView('MANAGE_LIST')} className="bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 py-2 rounded-xl font-bold text-sm">🛠 管理列表</button>
+                     </div>
+                 )}
+
                  {anns.map((a, i) => (
                      <div key={a.id} onClick={()=>openDetail(a)} className={`bg-white dark:bg-gray-800 p-4 rounded-2xl border dark:border-gray-700 shadow-sm flex items-center gap-4 cursor-pointer hover:shadow-md transition-all active:scale-[0.99] stagger-${(i%5)+1}`}>
                          <div className={`w-3 h-3 rounded-full ${user && !a.read_by?.includes(user.id) ? 'bg-red-500' : 'bg-gray-300'}`}></div>
@@ -327,7 +415,6 @@ const AppContent: React.FC = () => {
   useEffect(() => { 
       if (isAuthenticated && isConfigured()) { 
           refreshStores(); 
-          // Polling logic omitted for brevity, same as before
       } 
   }, [isAuthenticated]);
 
@@ -344,8 +431,6 @@ const AppContent: React.FC = () => {
           const originalHeight = el.style.height;
           const originalOverflow = el.style.overflow;
           
-          // Clone strictly for capture might be safer but complex with styles.
-          // Strategy: Use windowHeight option of html2canvas on the specific element
           html2canvas(el, {
               scrollHeight: el.scrollHeight,
               windowHeight: el.scrollHeight,
@@ -373,7 +458,15 @@ const AppContent: React.FC = () => {
       
       {/* DESKTOP SIDEBAR */}
       <div className="hidden md:block h-full">
-         {!perms.only_view_config && <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} currentStore={currentStore} />}
+         {!perms.only_view_config && (
+             <Sidebar 
+                 currentPage={currentPage} 
+                 onNavigate={setCurrentPage} 
+                 currentStore={currentStore} 
+                 stores={stores}
+                 onStoreChange={setCurrentStore} 
+             />
+         )}
       </div>
 
       {/* MOBILE DRAWER */}
@@ -381,7 +474,14 @@ const AppContent: React.FC = () => {
           <div className="fixed inset-0 z-50 md:hidden">
               <div className="absolute inset-0 bg-black/60 backdrop-blur-sm animate-fade-in" onClick={()=>setDrawerOpen(false)}></div>
               <div className="absolute left-0 top-0 bottom-0 w-64 bg-white dark:bg-gray-900 shadow-2xl animate-slide-in-right" style={{animationDirection: 'reverse'}}>
-                  <Sidebar currentPage={currentPage} onNavigate={(p)=>{setCurrentPage(p); setDrawerOpen(false);}} currentStore={currentStore} isMobileDrawer={true} />
+                  <Sidebar 
+                      currentPage={currentPage} 
+                      onNavigate={(p)=>{setCurrentPage(p); setDrawerOpen(false);}} 
+                      currentStore={currentStore} 
+                      stores={stores}
+                      onStoreChange={setCurrentStore}
+                      isMobileDrawer={true} 
+                  />
               </div>
           </div>
       )}

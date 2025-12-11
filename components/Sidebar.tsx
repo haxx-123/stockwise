@@ -1,19 +1,23 @@
+
 import React, { useState, useEffect } from 'react';
 import { Icons } from './Icons';
 import { authService } from '../services/authService';
 import { UsernameBadge } from './UsernameBadge';
 import { SVIPBadge } from './SVIPBadge';
 import { useUserPermissions } from '../contexts/PermissionContext';
+import { Store } from '../types';
 
 interface SidebarProps {
   currentPage: string;
   onNavigate: (page: string) => void;
   currentStore: string;
+  stores?: Store[];
+  onStoreChange?: (storeId: string) => void;
   hasUnread?: boolean;
   isMobileDrawer?: boolean; // New prop for styling
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, currentStore, hasUnread, isMobileDrawer }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, currentStore, stores = [], onStoreChange, hasUnread, isMobileDrawer }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const user = authService.getCurrentUser();
   const perms = useUserPermissions(user?.role_level);
@@ -63,6 +67,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
             <span className="text-[10px] text-gray-400 font-medium tracking-widest uppercase">Prism System</span>
         </div>
       </div>
+
+      {/* STORE SELECTOR */}
+      {!perms.hide_store_management && stores.length > 0 && (
+          <div className="px-4 mt-4">
+              <div className="bg-gray-50 dark:bg-gray-800 p-1 rounded-2xl border border-gray-100 dark:border-gray-700 flex items-center gap-2 relative">
+                  <div className="absolute left-3 text-gray-400"><Icons.Store size={18}/></div>
+                  <select 
+                      value={currentStore} 
+                      onChange={(e) => onStoreChange && onStoreChange(e.target.value)}
+                      className="w-full bg-transparent p-3 pl-10 text-sm font-bold text-gray-700 dark:text-white outline-none appearance-none cursor-pointer"
+                  >
+                      <option value="all">所有门店 (汇总)</option>
+                      {stores.map(s => (
+                          <option key={s.id} value={s.id}>{s.name}</option>
+                      ))}
+                  </select>
+                  <div className="absolute right-3 text-gray-400 pointer-events-none"><Icons.ChevronDown size={14}/></div>
+              </div>
+          </div>
+      )}
 
       <nav className="flex-1 p-4 space-y-2 overflow-y-auto custom-scrollbar">
         {menuItems.map((item, idx) => (

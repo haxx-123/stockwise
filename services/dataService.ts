@@ -1,5 +1,4 @@
 
-
 import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel, UserPermissions } from '../types';
 import { getSupabaseClient } from './supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from './authService';
@@ -48,12 +47,18 @@ class DataService {
       return (data || []).map((row: any) => this.mapRowToUser(row));
   }
 
+  // CRITICAL FIX: Fetch FRESH data for a single user to avoid stale cache in Permission Matrix
   async getUser(id: string): Promise<User | null> {
       const client = this.getClient();
       if (!client) return null;
       
+      // Always fetch directly from table to bypass any potential view caching issues
       const { data, error } = await client.from('users').select('*').eq('id', id).single();
-      if (error || !data) return null;
+      
+      if (error || !data) {
+          console.error("Single User Fetch Error:", error);
+          return null;
+      }
 
       return this.mapRowToUser(data);
   }
@@ -64,7 +69,7 @@ class DataService {
           username: row.username,
           password: row.password,
           role_level: row.role_level,
-          allowed_store_ids: row.allowed_store_ids,
+          allowed_store_ids: row.allowed_store_ids || [], // Ensure array
           is_archived: row.is_archived,
           face_descriptor: row.face_descriptor,
           
