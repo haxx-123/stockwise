@@ -1,6 +1,6 @@
 {
   "name": "棱镜",
-  "description": "多门店库存管理系统，支持批次追踪、效期管理和拆零散卖。具备 AI 库存分析功能。",
+  "description": "智能库管系统",
   "requestFramePermissions": [
     "camera"
   ]
