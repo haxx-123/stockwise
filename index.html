@@ -4,10 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#2563eb" />
-    <title>棱镜 Prism</title>
     <link rel="manifest" href="/manifest.json" />
-    <!-- Prism Icon -->
-    <link rel="icon" href="https://cdn-icons-png.flaticon.com/512/11496/11496732.png" type="image/png" />
+    <title>棱镜</title>
+    <!-- Prism Favicon -->
+    <link rel="icon" href="data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cg stroke='%232563eb' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5L16.5 5.5V20.5L12 22.5L7.5 20.5V5.5L12 2.5Z' /%3E %3Cpath d='M7.5 5.5L12 8.5L16.5 5.5' /%3E %3Cpath d='M12 8.5V22.5' /%3E %3Cpath d='M3 12L21 14' /%3E%3C/g%3E%3C/svg%3E" type="image/svg+xml" />
     
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -20,15 +20,6 @@
                 900: '#111827',
                 800: '#1f2937',
                 700: '#374151',
-              }
-            },
-            animation: {
-              'scale-press': 'scale 0.1s ease-in-out',
-            },
-            keyframes: {
-              scale: {
-                '0%, 100%': { transform: 'scale(1)' },
-                '50%': { transform: 'scale(0.95)' },
               }
             }
           }
@@ -48,46 +39,79 @@
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #f8fafc; /* Lighter background */
+        background-color: #f3f4f6;
         overflow-x: hidden;
       }
-      /* Custom Scrollbar */
-      .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 4px;
+        height: 4px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent; 
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #d1d5db; 
+        border-radius: 99px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #9ca3af; 
+      }
       
       /* Animations */
-      .animate-fade-in { animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
-      .animate-slide-in-right { animation: slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1); }
+      .animate-fade-in {
+          animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      .animate-slide-in-right {
+          animation: slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      .animate-scale-in {
+          animation: scaleIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+      }
       
+      /* Staggered list items */
+      .stagger-item {
+          opacity: 0;
+          animation: slideUpFade 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+      }
+      .stagger-item:nth-child(1) { animation-delay: 0.05s; }
+      .stagger-item:nth-child(2) { animation-delay: 0.1s; }
+      .stagger-item:nth-child(3) { animation-delay: 0.15s; }
+      .stagger-item:nth-child(4) { animation-delay: 0.2s; }
+      .stagger-item:nth-child(5) { animation-delay: 0.25s; }
+      
+      /* Button Press Effect */
+      .btn-press:active {
+          transform: scale(0.95);
+          transition: transform 0.1s;
+      }
+
+      /* Glassmorphism */
+      .glass {
+          background: rgba(255, 255, 255, 0.75);
+          backdrop-filter: blur(12px);
+          -webkit-backdrop-filter: blur(12px);
+          border: 1px solid rgba(255, 255, 255, 0.3);
+      }
+      .dark .glass {
+          background: rgba(17, 24, 39, 0.75);
+          border: 1px solid rgba(255, 255, 255, 0.05);
+      }
+
       @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
+          from { opacity: 0; }
+          to { opacity: 1; }
       }
       @keyframes slideInRight {
           from { opacity: 0; transform: translateX(20px); }
           to { opacity: 1; transform: translateX(0); }
       }
-
-      /* Stagger Animation for Lists */
-      .stagger-item {
-        opacity: 0;
-        animation: fadeInUp 0.5s ease-out forwards;
+      @keyframes slideUpFade {
+          from { opacity: 0; transform: translateY(10px); }
+          to { opacity: 1; transform: translateY(0); }
       }
-      @keyframes fadeInUp {
-        from { opacity: 0; transform: translateY(20px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      
-      /* Glassmorphism Utilities */
-      .glass {
-        background: rgba(255, 255, 255, 0.7);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-      }
-      .dark .glass {
-        background: rgba(17, 24, 39, 0.7);
+      @keyframes scaleIn {
+           from { opacity: 0; transform: scale(0.9); }
+           to { opacity: 1; transform: scale(1); }
       }
     </style>
   <script type="importmap">
@@ -106,6 +130,5 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
   </body>
 </html>

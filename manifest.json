@@ -1,20 +1,20 @@
 {
-  "name": "棱镜库存管理",
+  "name": "棱镜",
   "short_name": "棱镜",
-  "start_url": ".",
+  "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#2563eb",
   "icons": [
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/11496/11496732.png",
+      "src": "data:image/svg+xml,%3Csvg width='192' height='192' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cg stroke='%232563eb' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5L16.5 5.5V20.5L12 22.5L7.5 20.5V5.5L12 2.5Z' /%3E %3Cpath d='M7.5 5.5L12 8.5L16.5 5.5' /%3E %3Cpath d='M12 8.5V22.5' /%3E %3Cpath d='M3 12L21 14' /%3E%3C/g%3E%3C/svg%3E",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/svg+xml"
     },
     {
-      "src": "https://cdn-icons-png.flaticon.com/512/11496/11496732.png",
+      "src": "data:image/svg+xml,%3Csvg width='512' height='512' viewBox='0 0 24 24' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cg stroke='%232563eb' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 2.5L16.5 5.5V20.5L12 22.5L7.5 20.5V5.5L12 2.5Z' /%3E %3Cpath d='M7.5 5.5L12 8.5L16.5 5.5' /%3E %3Cpath d='M12 8.5V22.5' /%3E %3Cpath d='M3 12L21 14' /%3E%3C/g%3E%3C/svg%3E",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/svg+xml"
     }
   ]
 }
