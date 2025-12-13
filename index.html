@@ -1,11 +1,12 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>棱镜 - 智能库管系统</title>
-    <!-- Favicon: retouch_2025121122511132.png -->
-    <link rel="icon" href="retouch_2025121122511132.png" type="image/png" />
+    <title>棱镜 - StockWise智能库管系统</title>
+    <!-- Favicon -->
+    <link rel="icon" href="https://ibb.co/MDtMJNK9" type="image/png" />
     <link rel="manifest" href="/manifest.json">
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -14,6 +15,13 @@
         theme: {
           extend: {
             colors: {
+              // Prism Theme Colors
+              prism: {
+                bg: '#1a1a1a', // Dark Grey
+                panel: 'rgba(255, 255, 255, 0.08)', // Low transmission white
+                text: '#f3f4f6', // Off-white
+                accent: '#ffffff', // High highlight
+              },
               gray: {
                 900: '#111827',
                 800: '#1f2937',
@@ -24,6 +32,7 @@
               'fade-in-up': 'fadeInUp 0.5s ease-out forwards',
               'scale-in': 'scaleIn 0.3s ease-out forwards',
               'slide-in-right': 'slideInRight 0.3s ease-out forwards',
+              'fade-out': 'fadeOut 0.8s ease-in forwards',
             },
             keyframes: {
               fadeInUp: {
@@ -37,6 +46,10 @@
               slideInRight: {
                 '0%': { transform: 'translateX(100%)' },
                 '100%': { transform: 'translateX(0)' },
+              },
+              fadeOut: {
+                '0%': { opacity: '1' },
+                '100%': { opacity: '0', visibility: 'hidden' },
               }
             }
           }
@@ -44,49 +57,43 @@
       }
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Excel Parsing -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-    <!-- Screenshot -->
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <!-- QR Code Scanner Core Library -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-    <!-- Face API -->
     <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #f3f4f6;
+        background-color: #1a1a1a; /* Deep Dark */
+        color: #f3f4f6;
         overflow-x: hidden;
       }
-      .custom-scrollbar::-webkit-scrollbar {
-        width: 6px;
-        height: 6px;
+      
+      /* Glassmorphism Prism Style */
+      .glass {
+        background: rgba(255, 255, 255, 0.05);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid rgba(255, 255, 255, 0.1);
       }
-      .custom-scrollbar::-webkit-scrollbar-track {
-        background: transparent; 
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb {
-        background: #cbd5e1; 
-        border-radius: 99px;
-      }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-        background: #94a3b8; 
-      }
-      /* Stagger Animation Delay helper */
+      
+      /* Custom Scrollbar */
+      .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 99px; }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
+
+      /* Animation Delays */
       .stagger-1 { animation-delay: 100ms; }
       .stagger-2 { animation-delay: 200ms; }
       .stagger-3 { animation-delay: 300ms; }
       .stagger-4 { animation-delay: 400ms; }
       .stagger-5 { animation-delay: 500ms; }
-
-      /* Glassmorphism utility */
-      .glass {
-        background: rgba(255, 255, 255, 0.7);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-      }
-      .dark .glass {
-        background: rgba(17, 24, 39, 0.7);
+      
+      /* Install Banner */
+      #install-banner {
+        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+        z-index: 9999; display: none;
       }
     </style>
   <script type="importmap">
@@ -105,6 +112,40 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+    <div id="install-banner" class="glass px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-4">
+        <img src="https://ibb.co/zT2Vcwk8" class="w-10 h-10 rounded-lg">
+        <div>
+            <div class="font-bold text-white">安装 棱镜</div>
+            <div class="text-xs text-gray-300">添加到主屏幕，体验秒开</div>
+        </div>
+        <button id="install-btn" class="bg-white text-black px-4 py-2 rounded-xl font-bold text-sm">安装</button>
+    </div>
+    <script>
+      // PWA Install Logic
+      let deferredPrompt;
+      const banner = document.getElementById('install-banner');
+      const btn = document.getElementById('install-btn');
+      
+      window.addEventListener('beforeinstallprompt', (e) => {
+        e.preventDefault();
+        deferredPrompt = e;
+        // Check if iOS or Android
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+        if (!isIOS) {
+            banner.style.display = 'flex';
+        }
+      });
+
+      btn.addEventListener('click', async () => {
+        if (deferredPrompt) {
+          deferredPrompt.prompt();
+          const { outcome } = await deferredPrompt.userChoice;
+          if (outcome === 'accepted') {
+            banner.style.display = 'none';
+          }
+          deferredPrompt = null;
+        }
+      });
+    </script>
   </body>
 </html>

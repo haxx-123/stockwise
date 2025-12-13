@@ -60,6 +60,8 @@ export const PermissionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                         hide_perm_page: newUserRow.hide_perm_page ?? DEFAULT_PERMISSIONS.hide_perm_page,
                         hide_audit_hall: newUserRow.hide_audit_hall ?? DEFAULT_PERMISSIONS.hide_audit_hall,
                         hide_store_management: newUserRow.hide_store_management ?? DEFAULT_PERMISSIONS.hide_store_management,
+                        hide_new_store_page: newUserRow.hide_new_store_page ?? DEFAULT_PERMISSIONS.hide_new_store_page,
+                        hide_excel_export: newUserRow.hide_excel_export ?? DEFAULT_PERMISSIONS.hide_excel_export,
                         only_view_config: newUserRow.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config
                     };
                     
