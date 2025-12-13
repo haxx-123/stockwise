@@ -25,9 +25,9 @@ declare const faceapi: any;
 // Splash Screen
 const Splash = ({ isReady }: { isReady: boolean }) => (
     <div className={`fixed inset-0 bg-white dark:bg-gray-950 z-[9999] flex flex-col items-center justify-center transition-all duration-800 ease-out ${isReady ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        <img src="https://ibb.co/MDtMJNK9" className="w-24 h-24 mb-6 drop-shadow-2xl object-contain animate-bounce" />
+        <img src="https://i.ibb.co/vxTZMzfD/retouch-2025121122511132.png" className="w-24 h-24 mb-6 drop-shadow-2xl object-contain animate-bounce" />
         <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-[0.5em] text-center mb-8 uppercase">棱镜<br/><span className="text-xs tracking-[1em] text-gray-400 font-medium">StockWise</span></h1>
-        <img src="https://ibb.co/5hgSKM0N" className="w-48 h-auto object-contain opacity-80" />
+        <img src="https://i.ibb.co/8gLfYKCW/retouch-2025121313394035.png" className="w-48 h-auto object-contain opacity-80" />
     </div>
 );
 
@@ -52,13 +52,13 @@ const TopActions = ({ onNavigate, currentPage }: any) => {
     };
 
     const handleExcel = () => {
-        if (currentPage !== 'inventory') return alert("仅库存页面支持导出");
-        // Trigger event or use context. Simplified here:
+        if (currentPage !== 'inventory' && currentPage !== 'logs' && currentPage !== 'audit' && currentPage !== 'settings-perms') return;
         const event = new CustomEvent('trigger-excel-export');
         window.dispatchEvent(event);
     };
 
     const handleCopy = () => {
+        if (currentPage !== 'inventory' && currentPage !== 'logs' && currentPage !== 'audit' && currentPage !== 'settings-perms') return;
         const event = new CustomEvent('trigger-copy');
         window.dispatchEvent(event);
     };
@@ -114,6 +114,7 @@ const AppContent: React.FC = () => {
   const [currentStore, setCurrentStore] = useState('all');
   const [stores, setStores] = useState<Store[]>([]);
   const [theme, setTheme] = useState(localStorage.getItem('sw_theme') || 'light');
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   useEffect(() => {
       document.documentElement.className = ''; 
@@ -130,7 +131,7 @@ const AppContent: React.FC = () => {
                try {
                    const [sList] = await Promise.all([
                        dataService.getStores(),
-                       // pre-fetch models if needed
+                       // pre-fetch other critical data if needed
                    ]);
                    setStores(sList);
                } catch (e) { console.error("Boot Error", e); }
@@ -149,7 +150,10 @@ const AppContent: React.FC = () => {
                   const user = authService.getCurrentUser();
                   const valid = anns.find(a => !a.is_force_deleted && a.popup_config.enabled && !a.read_by?.includes(`HIDDEN_BY_${user?.id}`));
                   if (valid) {
-                      alert(`【公告】${valid.title}\n\n${valid.content}`);
+                      // Custom Modal needed for Rich Text, using alert for simple demo as requested, 
+                      // but ideally this should be a modal. Using simple alert for now to satisfy constraints.
+                      // For rich text popup, we'd render a component.
+                      alert(`【公告】${valid.title} (请在公告中心查看详情)`); 
                       sessionStorage.setItem(todayKey, 'true');
                   }
               });
@@ -179,15 +183,29 @@ const AppContent: React.FC = () => {
     <TopActions onNavigate={setCurrentPage} currentPage={currentPage} />
     
     <div className="h-screen flex font-sans text-gray-800 dark:text-gray-100 overflow-hidden bg-gray-50 dark:bg-gray-950">
-      <Sidebar 
-         currentPage={currentPage} 
-         onNavigate={setCurrentPage} 
-         currentStore={currentStore} 
-         stores={stores}
-         onStoreChange={setCurrentStore} 
-      />
       
-      <div id="main-content" className="flex-1 flex flex-col h-full relative transition-all duration-300 overflow-hidden ml-0 md:ml-72">
+      {/* Mobile Menu Button */}
+      <div className="fixed top-4 left-4 z-[60] md:hidden">
+          <button onClick={()=>setMobileMenuOpen(!mobileMenuOpen)} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full">
+              <Icons.Menu size={20}/>
+          </button>
+      </div>
+
+      {/* Sidebar: Overlay on Mobile, Fixed on Desktop */}
+      <div className={`fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 md:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:flex`}>
+          <Sidebar 
+             currentPage={currentPage} 
+             onNavigate={(p) => { setCurrentPage(p); setMobileMenuOpen(false); }} 
+             currentStore={currentStore} 
+             stores={stores}
+             onStoreChange={setCurrentStore}
+             isMobileDrawer={true} // Style adjustment
+          />
+      </div>
+      {/* Mobile Overlay Backdrop */}
+      {mobileMenuOpen && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={()=>setMobileMenuOpen(false)}></div>}
+      
+      <div id="main-content" className="flex-1 flex flex-col h-full relative transition-all duration-300 overflow-hidden">
         <div className="flex-1 overflow-auto custom-scrollbar p-0 relative pb-safe">
             <Suspense fallback={<div className="p-10 text-center">Loading...</div>}>
                 {currentPage === 'dashboard' && <Dashboard currentStore={currentStore} onNavigate={setCurrentPage} />}
@@ -213,32 +231,40 @@ const LoginPage = ({ onLogin, onFaceLogin }: any) => {
     const [mode, setMode] = useState<'PASS' | 'FACE'>('PASS');
     const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
     const [scanStatus, setScanStatus] = useState('');
+    const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
 
     const startCamera = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             if (videoEl) videoEl.srcObject = stream;
-            setScanStatus('Scanning...');
-            // In a real implementation, faceapi.detectSingleFace(videoEl).withFaceLandmarks().withFaceDescriptor()
-            // Here we simulate detection after 2s for demo purposes if no API key
-            setTimeout(() => {
-                if (Math.random() > 0.1) { // 90% success
-                    setScanStatus('Success!');
-                    setTimeout(() => {
-                        onFaceLogin('管理员'); // Simulate
-                    }, 1000);
-                } else {
-                    setScanStatus('Failed. Try again.');
+            setScanStatus('正在初始化视觉模型...');
+            
+            await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
+            setScanStatus('请正对摄像头...');
+
+            const detect = async () => {
+                if(videoEl && canvasEl) {
+                    const detections = await faceapi.detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions());
+                    if (detections && detections.score > 0.8) {
+                        setScanStatus('识别成功!');
+                        // Stop camera
+                        stream.getTracks().forEach(t => t.stop());
+                        setTimeout(() => onFaceLogin(user || '管理员'), 1000); // Simulate finding user
+                    } else {
+                        requestAnimationFrame(detect);
+                    }
                 }
-            }, 2000);
-        } catch (e) { alert("Camera error"); }
+            };
+            detect();
+
+        } catch (e) { alert("Camera error or Model load error"); }
     };
 
     return (
         <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 p-4">
             <div className="w-full max-w-md bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl border dark:border-gray-700">
                 <div className="text-center mb-8">
-                     <img src="https://ibb.co/MDtMJNK9" className="w-20 h-20 mx-auto mb-4 drop-shadow-xl object-contain" />
+                     <img src="https://i.ibb.co/vxTZMzfD/retouch-2025121122511132.png" className="w-20 h-20 mx-auto mb-4 drop-shadow-xl object-contain" />
                      <h1 className="text-2xl font-black tracking-widest dark:text-white">STOCKWISE</h1>
                 </div>
                 
@@ -257,9 +283,11 @@ const LoginPage = ({ onLogin, onFaceLogin }: any) => {
                     <div className="flex flex-col items-center gap-4">
                         <div className="relative w-64 h-64 bg-black rounded-full overflow-hidden border-4 border-blue-500">
                             <video ref={setVideoEl} autoPlay muted playsInline className="w-full h-full object-cover"></video>
+                            <canvas ref={setCanvasEl} className="absolute inset-0 w-full h-full"></canvas>
                             <div className="absolute inset-0 border-4 border-transparent border-t-green-500 rounded-full animate-spin"></div>
                         </div>
                         <p className="font-bold text-lg">{scanStatus}</p>
+                        <button onClick={()=>{window.location.reload()}} className="text-sm text-gray-500">取消</button>
                     </div>
                 )}
             </div>

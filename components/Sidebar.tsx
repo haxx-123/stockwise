@@ -22,7 +22,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
   const user = authService.getCurrentUser();
   const perms = useUserPermissions(user?.role_level);
 
-  const LOGO_URL = "https://ibb.co/MDtMJNK9";
+  const LOGO_URL = "https://i.ibb.co/vxTZMzfD/retouch-2025121122511132.png";
 
   const menuItems = [
     { id: 'dashboard', label: '仪表盘', icon: Icons.LayoutDashboard },
