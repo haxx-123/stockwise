@@ -1,12 +1,11 @@
-
 {
-  "name": "棱镜",
+  "name": "棱镜-StockWise",
   "short_name": "棱镜",
-  "description": "StockWise-智能库管系统",
+  "description": "StockWise - 智能库管系统",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#1f2937",
-  "theme_color": "#1f2937",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
   "icons": [
     {
       "src": "https://ibb.co/zT2Vcwk8",

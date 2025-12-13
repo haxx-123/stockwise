@@ -1,12 +1,14 @@
 
+
 export type Store = {
   id: string;
   name: string;
   location?: string;
-  is_archived?: boolean;
+  image_url?: string; // Store Image
   parent_id?: string | null; // Parent Store ID
-  managers?: string[]; // Array of User IDs
-  viewers?: string[]; // Array of User IDs
+  managers?: string[]; // User IDs of managers
+  viewers?: string[]; // User IDs of viewers
+  is_archived?: boolean; // Soft Delete
 };
 
 export type Product = {
@@ -19,10 +21,10 @@ export type Product = {
   split_ratio?: number | null;     
   min_stock_level?: number | null; 
   image_url?: string | null;
-  remark?: string | null;
+  remark?: string | null; // Remark field
   pinyin?: string | null; 
   is_archived?: boolean; 
-  bound_store_id?: string | null; 
+  bound_store_id?: string | null; // Strict Isolation
 };
 
 export type Batch = {
@@ -30,13 +32,11 @@ export type Batch = {
   product_id: string;
   store_id: string;
   batch_number?: string | null;
-  quantity: number; // Stored in smallest unit
+  quantity: number;        
   expiry_date?: string | null;     
   created_at: string;
   is_archived?: boolean; 
   store_name?: string; 
-  image_url?: string | null;
-  remark?: string | null;
 };
 
 export type TransactionType = 'IN' | 'OUT' | 'TRANSFER' | 'ADJUST' | 'IMPORT' | 'DELETE' | 'RESTORE';
@@ -73,19 +73,20 @@ export type RoleLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export interface UserPermissions {
     role_level: RoleLevel;
-    logs_level: 'A' | 'B' | 'C' | 'D'; // A:All+Undo, B:All+LowUndo, C:All+SelfUndo, D:SelfOnly
+    logs_level: 'A' | 'B' | 'C' | 'D';
     announcement_rule: 'PUBLISH' | 'VIEW';
     store_scope: 'GLOBAL' | 'LIMITED';
     show_excel: boolean;
-    view_peers: boolean; // Can see/create same level
+    view_peers: boolean;
     view_self_in_list: boolean;
     hide_perm_page: boolean;
     hide_audit_hall: boolean;
-    hide_store_management: boolean; // Hide "Edit" store button
-    hide_new_store_page: boolean; // New
-    hide_excel_export: boolean; // New
+    hide_store_management: boolean;
     only_view_config: boolean;
 }
+
+export type RolePermissionRule = UserPermissions;
+export type RolePermissionMatrix = Record<RoleLevel, RolePermissionRule>;
 
 export type User = {
   id: string;
@@ -93,7 +94,7 @@ export type User = {
   password?: string; 
   role_level: RoleLevel; 
   
-  // Flat Permissions
+  // Flattened Permissions (Direct DB Columns)
   logs_level?: 'A' | 'B' | 'C' | 'D';
   announcement_rule?: 'PUBLISH' | 'VIEW';
   store_scope?: 'GLOBAL' | 'LIMITED';
@@ -103,15 +104,13 @@ export type User = {
   hide_perm_page?: boolean;
   hide_audit_hall?: boolean;
   hide_store_management?: boolean;
-  hide_new_store_page?: boolean;
-  hide_excel_export?: boolean;
   only_view_config?: boolean;
 
-  permissions: UserPermissions; 
+  permissions: UserPermissions; // Constructed at runtime from above fields
   
-  allowed_store_ids: string[]; 
-  is_archived?: boolean; 
-  face_descriptor?: string | null; 
+  allowed_store_ids: string[]; // For LIMITED scope
+  is_archived?: boolean; // Soft Delete
+  face_descriptor?: string | null; // Base64 of face image or descriptor
 };
 
 export type Announcement = {
@@ -126,9 +125,9 @@ export type Announcement = {
       enabled: boolean;
       duration: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'FOREVER';
   };
-  allow_delete: boolean; // "Allow Hide"
-  is_force_deleted?: boolean; 
-  read_by?: string[]; 
+  allow_delete: boolean; // "Can hide"
+  is_force_deleted?: boolean; // Admin soft delete (invalid for everyone)
+  read_by?: string[]; // Array of User IDs OR 'HIDDEN_BY_USERID' strings
   created_at: string;
 };
 

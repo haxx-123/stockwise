@@ -13,8 +13,6 @@ export const DEFAULT_PERMISSIONS: UserPermissions = {
     hide_perm_page: false,
     hide_audit_hall: true,
     hide_store_management: true,
-    hide_new_store_page: true,
-    hide_excel_export: true,
     only_view_config: false
 };
 
@@ -35,8 +33,6 @@ export const DEFAULT_ADMIN: User = {
         hide_perm_page: false,
         hide_audit_hall: false,
         hide_store_management: false,
-        hide_new_store_page: false,
-        hide_excel_export: false,
         only_view_config: false
     },
     allowed_store_ids: []

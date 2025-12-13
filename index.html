@@ -1,10 +1,9 @@
-
 <!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <title>棱镜 - StockWise智能库管系统</title>
+    <title>棱镜 - StockWise</title>
     <!-- Favicon -->
     <link rel="icon" href="https://ibb.co/MDtMJNK9" type="image/png" />
     <link rel="manifest" href="/manifest.json">
@@ -15,24 +14,20 @@
         theme: {
           extend: {
             colors: {
-              // Prism Theme Colors
-              prism: {
-                bg: '#1a1a1a', // Dark Grey
-                panel: 'rgba(255, 255, 255, 0.08)', // Low transmission white
-                text: '#f3f4f6', // Off-white
-                accent: '#ffffff', // High highlight
-              },
               gray: {
                 900: '#111827',
                 800: '#1f2937',
                 700: '#374151',
+              },
+              prism: {
+                bg: '#f5f5f7',
+                text: '#000000',
               }
             },
             animation: {
               'fade-in-up': 'fadeInUp 0.5s ease-out forwards',
               'scale-in': 'scaleIn 0.3s ease-out forwards',
               'slide-in-right': 'slideInRight 0.3s ease-out forwards',
-              'fade-out': 'fadeOut 0.8s ease-in forwards',
             },
             keyframes: {
               fadeInUp: {
@@ -46,10 +41,6 @@
               slideInRight: {
                 '0%': { transform: 'translateX(100%)' },
                 '100%': { transform: 'translateX(0)' },
-              },
-              fadeOut: {
-                '0%': { opacity: '1' },
-                '100%': { opacity: '0', visibility: 'hidden' },
               }
             }
           }
@@ -57,44 +48,70 @@
       }
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Excel Parsing -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
+    <!-- Screenshot -->
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
+    <!-- QR Code Scanner Core Library -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+    <!-- Face API -->
     <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #1a1a1a; /* Deep Dark */
-        color: #f3f4f6;
+        background-color: #f3f4f6;
         overflow-x: hidden;
       }
-      
-      /* Glassmorphism Prism Style */
-      .glass {
-        background: rgba(255, 255, 255, 0.05);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
-        border: 1px solid rgba(255, 255, 255, 0.1);
+      .custom-scrollbar::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-track {
+        background: transparent; 
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb {
+        background: #cbd5e1; 
+        border-radius: 99px;
+      }
+      .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+        background: #94a3b8; 
       }
       
-      /* Custom Scrollbar */
-      .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); border-radius: 99px; }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.4); }
-
-      /* Animation Delays */
+      /* Prism Theme Override */
+      html.theme-prism body {
+        background-color: #f0f2f5 !important;
+        color: #000000 !important;
+      }
+      html.theme-prism .glass, 
+      html.theme-prism .bg-white, 
+      html.theme-prism .bg-gray-50, 
+      html.theme-prism .dark\:bg-gray-900,
+      html.theme-prism .dark\:bg-gray-800 {
+        background-color: rgba(255, 255, 255, 0.85) !important;
+        backdrop-filter: blur(12px) !important;
+        -webkit-backdrop-filter: blur(12px) !important;
+        border-color: rgba(0,0,0,0.1) !important;
+        color: #000000 !important;
+      }
+      html.theme-prism input, 
+      html.theme-prism select, 
+      html.theme-prism textarea {
+        background-color: rgba(255,255,255,0.9) !important;
+        border: 1px solid #000000 !important;
+        color: #000000 !important;
+      }
+      html.theme-prism .text-gray-500, 
+      html.theme-prism .text-gray-400,
+      html.theme-prism .dark\:text-gray-300,
+      html.theme-prism .dark\:text-white {
+        color: #000000 !important;
+      }
+      
       .stagger-1 { animation-delay: 100ms; }
       .stagger-2 { animation-delay: 200ms; }
       .stagger-3 { animation-delay: 300ms; }
       .stagger-4 { animation-delay: 400ms; }
       .stagger-5 { animation-delay: 500ms; }
-      
-      /* Install Banner */
-      #install-banner {
-        position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-        z-index: 9999; display: none;
-      }
     </style>
   <script type="importmap">
 {
@@ -112,41 +129,5 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
-    <div id="install-banner" class="glass px-6 py-3 rounded-2xl shadow-2xl flex items-center gap-4">
-        <img src="https://ibb.co/zT2Vcwk8" class="w-10 h-10 rounded-lg">
-        <div>
-            <div class="font-bold text-white">安装 棱镜</div>
-            <div class="text-xs text-gray-300">添加到主屏幕，体验秒开</div>
-        </div>
-        <button id="install-btn" class="bg-white text-black px-4 py-2 rounded-xl font-bold text-sm">安装</button>
-    </div>
-    <script>
-      // PWA Install Logic
-      let deferredPrompt;
-      const banner = document.getElementById('install-banner');
-      const btn = document.getElementById('install-btn');
-      
-      window.addEventListener('beforeinstallprompt', (e) => {
-        e.preventDefault();
-        deferredPrompt = e;
-        // Check if iOS or Android
-        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
-        if (!isIOS) {
-            banner.style.display = 'flex';
-        }
-      });
-
-      btn.addEventListener('click', async () => {
-        if (deferredPrompt) {
-          deferredPrompt.prompt();
-          const { outcome } = await deferredPrompt.userChoice;
-          if (outcome === 'accepted') {
-            banner.style.display = 'none';
-          }
-          deferredPrompt = null;
-        }
-      });
-    </script>
   </body>
 </html>
