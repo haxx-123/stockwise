@@ -1,6 +1,5 @@
 
 
-
 import React, { useState } from 'react';
 import { Icons } from './Icons';
 import { authService } from '../services/authService';
@@ -23,6 +22,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
   const user = authService.getCurrentUser();
   const perms = useUserPermissions(user?.role_level);
 
+  const LOGO_URL = "https://ibb.co/MDtMJNK9";
+
   const menuItems = [
     { id: 'dashboard', label: '仪表盘', icon: Icons.LayoutDashboard },
     { id: 'inventory', label: '库存管理', icon: Icons.Package },
@@ -30,10 +31,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
     { id: 'logs', label: '操作日志', icon: Icons.Sparkles },
   ];
 
-  if (currentStore === 'all' && ['A','B','C'].includes(perms.logs_level)) {
-      if (!perms.hide_audit_hall) {
-          menuItems.push({ id: 'audit', label: '审计大厅', icon: Icons.AlertTriangle });
-      }
+  // Audit Hall logic: Visible if perm allows or if role_level 0
+  const showAudit = !perms.hide_audit_hall || user?.role_level === 0;
+  if (showAudit) {
+      menuItems.push({ id: 'audit', label: '审计大厅', icon: Icons.AlertTriangle });
   }
 
   const NavButton = ({ item }: any) => {
@@ -58,7 +59,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
     <div className={`h-full bg-white dark:bg-gray-900 border-r border-gray-200 dark:border-gray-800 flex flex-col shrink-0 shadow-xl z-50 ${isMobileDrawer ? 'w-full' : 'w-72 fixed inset-y-0 left-0'}`}>
       <div className="p-6 flex items-center space-x-4 border-b border-gray-100 dark:border-gray-800">
         <div className="w-12 h-12 bg-white rounded-2xl flex items-center justify-center shadow-lg border border-gray-100 overflow-hidden shrink-0">
-          <img src="https://ibb.co/MDtMJNK9" alt="Logo" className="w-10 h-10 object-contain" />
+          <img src={LOGO_URL} alt="Logo" className="w-10 h-10 object-contain" />
         </div>
         <div>
             <span className="text-xl font-black text-gray-800 dark:text-white tracking-tight block">棱镜</span>
@@ -105,6 +106,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
                 <NavButton item={item} />
              </div>
         ))}
+        
+        {/* Announcement Button in Sidebar as per logic */}
+        <div className="stagger-5 animate-fade-in-up">
+            <NavButton item={{ id: 'announcement', label: '公告中心', icon: Icons.Megaphone }} />
+        </div>
 
         <div className="pt-6 mt-2 border-t border-gray-100 dark:border-gray-800">
             <button
@@ -122,7 +128,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
             
             {settingsOpen && (
                 <div className="pl-4 space-y-1 mt-2 ml-4 border-l-2 border-gray-100 dark:border-gray-800 animate-scale-in origin-top">
-                    <button onClick={() => onNavigate('settings-config')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-config' ? 'text-blue-600 font-bold bg-blue-50' : 'text-gray-500 hover:text-gray-900'}`}>连接配置</button>
+                    {(user?.role_level === 0) && <button onClick={() => onNavigate('settings-config')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-config' ? 'text-blue-600 font-bold bg-blue-50' : 'text-gray-500 hover:text-gray-900'}`}>连接配置</button>}
+                    
                     <button onClick={() => onNavigate('settings-account')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-account' ? 'text-blue-600 font-bold bg-blue-50' : 'text-gray-500 hover:text-gray-900'}`}>账户设置</button>
                     {!perms.hide_perm_page && <button onClick={() => onNavigate('settings-perms')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-perms' ? 'text-blue-600 font-bold bg-blue-50' : 'text-gray-500 hover:text-gray-900'}`}>权限设置</button>}
                     <button onClick={() => onNavigate('settings-theme')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-theme' ? 'text-blue-600 font-bold bg-blue-50' : 'text-gray-500 hover:text-gray-900'}`}>应用主题</button>

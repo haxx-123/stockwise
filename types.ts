@@ -4,11 +4,13 @@ export type Store = {
   id: string;
   name: string;
   location?: string;
-  image_url?: string; // Store Image
-  parent_id?: string | null; // Parent Store ID
-  managers?: string[]; // User IDs of managers
-  viewers?: string[]; // User IDs of viewers
-  is_archived?: boolean; // Soft Delete
+  image_url?: string; 
+  parent_id?: string | null; // Link to Parent Store
+  managers?: string[]; // User IDs
+  viewers?: string[]; // User IDs
+  is_archived?: boolean; 
+  // Virtual
+  children?: Store[]; 
 };
 
 export type Product = {
@@ -16,15 +18,15 @@ export type Product = {
   name: string;
   sku?: string | null;
   category?: string | null;
-  unit_name?: string | null;       
-  split_unit_name?: string | null; 
+  unit_name?: string | null; // "整"
+  split_unit_name?: string | null; // "散"
   split_ratio?: number | null;     
   min_stock_level?: number | null; 
   image_url?: string | null;
-  remark?: string | null; // Remark field
+  remark?: string | null;
   pinyin?: string | null; 
   is_archived?: boolean; 
-  bound_store_id?: string | null; // Strict Isolation
+  bound_store_id?: string | null; 
 };
 
 export type Batch = {
@@ -32,11 +34,14 @@ export type Batch = {
   product_id: string;
   store_id: string;
   batch_number?: string | null;
-  quantity: number;        
+  quantity: number; // Smallest unit
   expiry_date?: string | null;     
   created_at: string;
   is_archived?: boolean; 
-  store_name?: string; 
+  store_name?: string;
+  
+  image_url?: string | null;
+  remark?: string | null; 
 };
 
 export type TransactionType = 'IN' | 'OUT' | 'TRANSFER' | 'ADJUST' | 'IMPORT' | 'DELETE' | 'RESTORE';
@@ -68,7 +73,6 @@ export type AuditLog = {
   timestamp: string;
 };
 
-// 0-9: Lower is higher power. 00 is Admin.
 export type RoleLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
 export interface UserPermissions {
@@ -76,17 +80,21 @@ export interface UserPermissions {
     logs_level: 'A' | 'B' | 'C' | 'D';
     announcement_rule: 'PUBLISH' | 'VIEW';
     store_scope: 'GLOBAL' | 'LIMITED';
+    
+    // UI Visibility Toggles
     show_excel: boolean;
     view_peers: boolean;
     view_self_in_list: boolean;
+    
     hide_perm_page: boolean;
     hide_audit_hall: boolean;
     hide_store_management: boolean;
+    hide_new_store_btn: boolean;
+    hide_excel_export_btn: boolean;
+    hide_store_edit_btn: boolean;
+
     only_view_config: boolean;
 }
-
-export type RolePermissionRule = UserPermissions;
-export type RolePermissionMatrix = Record<RoleLevel, RolePermissionRule>;
 
 export type User = {
   id: string;
@@ -94,23 +102,18 @@ export type User = {
   password?: string; 
   role_level: RoleLevel; 
   
-  // Flattened Permissions (Direct DB Columns)
-  logs_level?: 'A' | 'B' | 'C' | 'D';
-  announcement_rule?: 'PUBLISH' | 'VIEW';
-  store_scope?: 'GLOBAL' | 'LIMITED';
-  show_excel?: boolean;
-  view_peers?: boolean;
-  view_self_in_list?: boolean;
-  hide_perm_page?: boolean;
-  hide_audit_hall?: boolean;
-  hide_store_management?: boolean;
-  only_view_config?: boolean;
-
-  permissions: UserPermissions; // Constructed at runtime from above fields
+  permissions: UserPermissions;
   
-  allowed_store_ids: string[]; // For LIMITED scope
-  is_archived?: boolean; // Soft Delete
-  face_descriptor?: string | null; // Base64 of face image or descriptor
+  allowed_store_ids: string[]; 
+  is_archived?: boolean; 
+  face_descriptor?: number[]; // Float32Array as array
+  
+  // Device History
+  device_history?: {
+      device_name: string;
+      last_login: string;
+      ip?: string;
+  }[];
 };
 
 export type Announcement = {
@@ -126,8 +129,8 @@ export type Announcement = {
       duration: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'FOREVER';
   };
   allow_delete: boolean; // "Can hide"
-  is_force_deleted?: boolean; // Admin soft delete (invalid for everyone)
-  read_by?: string[]; // Array of User IDs OR 'HIDDEN_BY_USERID' strings
+  is_force_deleted?: boolean; 
+  read_by?: string[]; // "HIDDEN_BY_ID" or "READ_BY_ID"
   created_at: string;
 };
 

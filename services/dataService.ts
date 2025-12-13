@@ -1,4 +1,5 @@
 
+
 import { Product, Batch, Transaction, Store, User, Announcement, AuditLog, RoleLevel, UserPermissions } from '../types';
 import { getSupabaseClient } from './supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from './authService';
@@ -26,149 +27,68 @@ class DataService {
       });
   }
 
-  // --- Users (Architecture Refactor: Direct User Table) ---
+  // --- Users ---
   async getUsers(includeArchived = false): Promise<User[]> {
       const client = this.getClient();
       if (!client) return [];
       
-      // Query the table directly (or the simple view live_users_v which selects from users)
       let query = client.from('live_users_v').select('*');
-      
       if (!includeArchived) {
           query = query.or('is_archived.is.null,is_archived.eq.false');
       }
       const { data, error } = await query;
-      if (error) {
-          console.error("User Fetch Error:", error);
-          return [];
-      } 
+      if (error) { console.error(error); return []; }
       
-      // Map flat DB columns to User structure with permissions object
-      return (data || []).map((row: any) => this.mapRowToUser(row));
-  }
-
-  // CRITICAL FIX: Fetch FRESH data for a single user to avoid stale cache in Permission Matrix
-  async getUser(id: string): Promise<User | null> {
-      const client = this.getClient();
-      if (!client) return null;
-      
-      // Always fetch directly from table to bypass any potential view caching issues
-      const { data, error } = await client.from('users').select('*').eq('id', id).single();
-      
-      if (error || !data) {
-          console.error("Single User Fetch Error:", error);
-          return null;
-      }
-
-      return this.mapRowToUser(data);
-  }
-
-  private mapRowToUser(row: any): User {
-      return {
-          id: row.id,
-          username: row.username,
-          password: row.password,
-          role_level: row.role_level,
-          allowed_store_ids: row.allowed_store_ids || [], // Ensure array
-          is_archived: row.is_archived,
-          face_descriptor: row.face_descriptor,
-          
-          // Flat fields on User object
-          logs_level: row.logs_level,
-          announcement_rule: row.announcement_rule,
-          store_scope: row.store_scope,
-          show_excel: row.show_excel,
-          view_peers: row.view_peers,
-          view_self_in_list: row.view_self_in_list,
-          hide_perm_page: row.hide_perm_page,
-          hide_audit_hall: row.hide_audit_hall,
-          hide_store_management: row.hide_store_management,
-          only_view_config: row.only_view_config,
-
-          // Construct permissions object for app compatibility
+      // Map view columns to permissions object
+      return (data || []).map((row: any) => ({
+          ...row,
           permissions: {
               role_level: row.role_level,
-              logs_level: row.logs_level ?? DEFAULT_PERMISSIONS.logs_level,
-              announcement_rule: row.announcement_rule ?? DEFAULT_PERMISSIONS.announcement_rule,
-              store_scope: row.store_scope ?? DEFAULT_PERMISSIONS.store_scope,
-              show_excel: row.show_excel ?? DEFAULT_PERMISSIONS.show_excel,
-              view_peers: row.view_peers ?? DEFAULT_PERMISSIONS.view_peers,
-              view_self_in_list: row.view_self_in_list ?? DEFAULT_PERMISSIONS.view_self_in_list,
-              hide_perm_page: row.hide_perm_page ?? DEFAULT_PERMISSIONS.hide_perm_page,
-              hide_audit_hall: row.hide_audit_hall ?? DEFAULT_PERMISSIONS.hide_audit_hall,
-              hide_store_management: row.hide_store_management ?? DEFAULT_PERMISSIONS.hide_store_management,
-              only_view_config: row.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config
-          } as UserPermissions
-      };
-  }
-
-  async createUser(user: Omit<User, 'id'>): Promise<void> {
-      const client = this.getClient();
-      if (!client) return;
-      
-      await this.logClientAction('CREATE_USER', { target: user.username });
-
-      // Flatten permissions for DB insertion
-      const { permissions, ...userData } = user as any;
-      const payload = {
-          ...userData,
-          id: crypto.randomUUID(),
-          // Use values from permissions object if available, otherwise fallback to root props or defaults
-          logs_level: user.logs_level || permissions?.logs_level || DEFAULT_PERMISSIONS.logs_level,
-          announcement_rule: user.announcement_rule || permissions?.announcement_rule || DEFAULT_PERMISSIONS.announcement_rule,
-          store_scope: user.store_scope || permissions?.store_scope || DEFAULT_PERMISSIONS.store_scope,
-          show_excel: user.show_excel ?? permissions?.show_excel ?? DEFAULT_PERMISSIONS.show_excel,
-          view_peers: user.view_peers ?? permissions?.view_peers ?? DEFAULT_PERMISSIONS.view_peers,
-          view_self_in_list: user.view_self_in_list ?? permissions?.view_self_in_list ?? DEFAULT_PERMISSIONS.view_self_in_list,
-          hide_perm_page: user.hide_perm_page ?? permissions?.hide_perm_page ?? DEFAULT_PERMISSIONS.hide_perm_page,
-          hide_audit_hall: user.hide_audit_hall ?? permissions?.hide_audit_hall ?? DEFAULT_PERMISSIONS.hide_audit_hall,
-          hide_store_management: user.hide_store_management ?? permissions?.hide_store_management ?? DEFAULT_PERMISSIONS.hide_store_management,
-          only_view_config: user.only_view_config ?? permissions?.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config,
-          
-          allowed_store_ids: user.allowed_store_ids || [],
-          is_archived: false
-      };
-
-      const { error } = await client.from('users').insert(payload);
-      if (error) throw new Error(error.message);
+              logs_level: row.logs_level || DEFAULT_PERMISSIONS.logs_level,
+              announcement_rule: row.announcement_rule || DEFAULT_PERMISSIONS.announcement_rule,
+              store_scope: row.store_scope || DEFAULT_PERMISSIONS.store_scope,
+              show_excel: row.show_excel,
+              view_peers: row.view_peers,
+              view_self_in_list: row.view_self_in_list,
+              hide_perm_page: row.hide_perm_page,
+              hide_audit_hall: row.hide_audit_hall,
+              hide_store_management: row.hide_store_management,
+              only_view_config: row.only_view_config,
+              hide_new_store_btn: row.hide_new_store_btn,
+              hide_excel_export_btn: row.hide_excel_export_btn,
+              hide_store_edit_btn: row.hide_store_edit_btn
+          }
+      }));
   }
 
   async updateUser(id: string, updates: Partial<User>): Promise<void> {
       const client = this.getClient();
       if (!client) return;
       
-      const { permissions, ...userData } = updates as any;
-      
-      // If permissions object is present in updates, merge it into flat fields
-      let payload = { ...userData };
-      if (permissions) {
-          payload = {
-              ...payload,
-              logs_level: permissions.logs_level,
-              announcement_rule: permissions.announcement_rule,
-              store_scope: permissions.store_scope,
-              show_excel: permissions.show_excel,
-              view_peers: permissions.view_peers,
-              view_self_in_list: permissions.view_self_in_list,
-              hide_perm_page: permissions.hide_perm_page,
-              hide_audit_hall: permissions.hide_audit_hall,
-              hide_store_management: permissions.hide_store_management,
-              only_view_config: permissions.only_view_config
+      // Separate flat fields from permissions object
+      let payload: any = { ...updates };
+      delete payload.permissions;
+
+      if (updates.permissions) {
+          const p = updates.permissions;
+          payload = { ...payload, 
+              logs_level: p.logs_level,
+              announcement_rule: p.announcement_rule,
+              store_scope: p.store_scope,
+              show_excel: p.show_excel,
+              view_peers: p.view_peers,
+              view_self_in_list: p.view_self_in_list,
+              hide_perm_page: p.hide_perm_page,
+              hide_audit_hall: p.hide_audit_hall,
+              hide_store_management: p.hide_store_management,
+              only_view_config: p.only_view_config,
+              hide_new_store_btn: p.hide_new_store_btn,
+              hide_excel_export_btn: p.hide_excel_export_btn,
+              hide_store_edit_btn: p.hide_store_edit_btn
           };
       }
 
-      // No sensitive log if it's just a realtime patch, but good to keep trace
-      // await this.logClientAction('UPDATE_USER', { id, payload });
-      const { error } = await client.from('users').update(payload).eq('id', id);
-      if (error) throw new Error(error.message);
-  }
-
-  async deleteUser(id: string): Promise<void> {
-      const client = this.getClient();
-      if(!client) return;
-      await this.logClientAction('DELETE_USER', { id });
-      // Soft Delete Only
-      await client.from('users').update({ is_archived: true }).eq('id', id);
+      await client.from('users').update(payload).eq('id', id);
   }
 
   // --- Announcements ---
@@ -194,25 +114,16 @@ class DataService {
       });
   }
 
-  async updateAnnouncement(id: string, updates: Partial<Announcement>): Promise<void> {
-      const client = this.getClient();
-      if(!client) return;
-      await this.logClientAction('UPDATE_ANNOUNCEMENT', { id, updates });
-      await client.from('announcements').update(updates).eq('id', id);
-  }
-  
   async deleteAnnouncement(id: string, force = false): Promise<void> {
       const client = this.getClient();
       if(!client) return;
-      
       const user = authService.getCurrentUser();
       
       if (force) {
-          // Admin "Force Delete" -> invalidates for everyone (mark is_force_deleted)
           await this.logClientAction('FORCE_DELETE_ANNOUNCEMENT', { id });
           await client.from('announcements').update({ is_force_deleted: true }).eq('id', id);
       } else {
-          // Soft delete for "My Announcements" (hide from self)
+          // Hide from self
           const { data: ann } = await client.from('announcements').select('read_by').eq('id', id).single();
           if (ann && user) {
               const reads = ann.read_by || [];
@@ -220,18 +131,6 @@ class DataService {
               if (!reads.includes(hideFlag)) {
                   await client.from('announcements').update({ read_by: [...reads, hideFlag] }).eq('id', id);
               }
-          }
-      }
-  }
-
-  async markAnnouncementRead(annId: string, userId: string): Promise<void> {
-      const client = this.getClient();
-      if(!client) return;
-      const { data: ann } = await client.from('announcements').select('read_by').eq('id', annId).single();
-      if (ann) {
-          const reads = ann.read_by || [];
-          if (!reads.includes(userId)) {
-              await client.from('announcements').update({ read_by: [...reads, userId] }).eq('id', annId);
           }
       }
   }
@@ -245,56 +144,23 @@ class DataService {
     const { data, error } = await client.from('stores').select('*').or('is_archived.is.null,is_archived.eq.false');
     if (error) throw new Error(error.message);
     
-    // Global filter based on User Permissions
-    const user = authService.getCurrentUser();
-    // Using fresh matrix check via context would be ideal, but here we use the hydrated user object which has permissions mapped from view
-    if (user && user.permissions.store_scope === 'LIMITED') {
-        const allowed = new Set(user.allowed_store_ids || []);
-        return (data || []).filter(s => allowed.has(s.id));
-    }
-
+    // Global filter based on User Permissions (if needed)
+    // Here we return all, but UI filters. 00 sees all.
     return data || [];
-  }
-
-  async createStore(name: string, location?: string): Promise<Store> {
-      const client = this.getClient();
-      if(!client) throw new Error("No DB");
-      await this.logClientAction('CREATE_STORE', { name });
-      const newStore = { id: crypto.randomUUID(), name, location, is_archived: false };
-      const { data, error } = await client.from('stores').insert(newStore).select().single();
-      if(error) throw new Error(error.message);
-      return data;
-  }
-
-  async updateStore(id: string, updates: Partial<Store>): Promise<void> {
-      const client = this.getClient();
-      if(!client) throw new Error("No DB");
-      await this.logClientAction('UPDATE_STORE', { id, updates });
-      const { error } = await client.from('stores').update(updates).eq('id', id);
-      if(error) throw new Error(error.message);
   }
 
   async deleteStore(id: string): Promise<void> {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       
-      // Strict Constraint: Check aggregated stock for this store across all ACTIVE batches
-      // We sum up the quantity of all batches belonging to this store that are not archived.
-      const { data: batches } = await client.from('batches')
-          .select('quantity')
-          .eq('store_id', id)
-          .or('is_archived.is.null,is_archived.eq.false');
-      
+      // Strict Constraint: Check aggregated stock
+      const { data: batches } = await client.from('batches').select('quantity').eq('store_id', id).gt('quantity', 0);
       const totalStock = batches?.reduce((acc, b) => acc + b.quantity, 0) || 0;
       
-      if (totalStock > 0) {
-          throw new Error(`该门店下仍有 ${totalStock} 件库存，无法删除。必须库存归零才允许删除。`);
-      }
+      if (totalStock > 0) throw new Error(`该门店下仍有 ${totalStock} 件库存，无法删除。`);
 
       await this.logClientAction('DELETE_STORE', { id });
-      // Soft Delete
-      const { error } = await client.from('stores').update({ is_archived: true }).eq('id', id);
-      if(error) throw new Error(error.message);
+      await client.from('stores').update({ is_archived: true }).eq('id', id);
   }
 
   async getProducts(includeArchived = false, currentStoreId?: string): Promise<Product[]> {
@@ -302,19 +168,14 @@ class DataService {
     if(!client) return [];
     
     let query = client.from('products').select('*');
-    if (!includeArchived) {
-        query = query.or('is_archived.is.null,is_archived.eq.false');
-    }
+    if (!includeArchived) query = query.or('is_archived.is.null,is_archived.eq.false');
 
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-
+    const { data } = await query;
     const products = data || [];
     
     if (currentStoreId && currentStoreId !== 'all') {
          return products.filter(p => !p.bound_store_id || p.bound_store_id === currentStoreId);
     }
-
     return products;
   }
 
@@ -322,13 +183,9 @@ class DataService {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       
-      // Extract change details for LOG
       const { data: old } = await client.from('products').select('*').eq('id', id).single();
-      
-      const { error } = await client.from('products').update(updates).eq('id', id);
-      if (error) throw new Error(error.message);
+      await client.from('products').update(updates).eq('id', id);
 
-      // Log Transaction for ADJUST (Property change)
       const user = authService.getCurrentUser();
       const changeDesc = Object.keys(updates).map(k => `${k}: [${(old as any)[k]}]->[${(updates as any)[k]}]`).join(', ');
       
@@ -340,38 +197,11 @@ class DataService {
           timestamp: new Date().toISOString(),
           note: `修改商品属性: ${changeDesc}`,
           operator: user?.username || 'System',
-          snapshot_data: { old: old, new: updates } // Save full old record for rollback
+          snapshot_data: { old: old, new: updates }
       });
   }
 
-  async deleteProduct(id: string): Promise<void> {
-      const client = this.getClient();
-      if(!client) throw new Error("No DB");
-      
-      const user = authService.getCurrentUser();
-      const { data: prod } = await client.from('products').select('name').eq('id', id).single();
-      
-      // Also fetch batch count for logging
-      const { count } = await client.from('batches').select('*', { count: 'exact', head: true }).eq('product_id', id).gt('quantity', 0);
-
-      // Soft Delete Only
-      const { error } = await client.from('products').update({ is_archived: true }).eq('id', id);
-      if (error) throw new Error(error.message);
-
-      // Record transaction
-      await client.from('transactions').insert({
-          id: crypto.randomUUID(),
-          type: 'DELETE',
-          product_id: id,
-          quantity: 0,
-          timestamp: new Date().toISOString(),
-          note: `删除了 ${prod?.name} (含 ${count} 个批次)`,
-          operator: user?.username || 'System',
-          snapshot_data: { context: 'SOFT_DELETE_PRODUCT', name: prod?.name }
-      });
-  }
-
-  async getBatches(storeId?: string, productId?: string): Promise<Batch[]> {
+  async getBatches(storeId?: string): Promise<Batch[]> {
     const client = this.getClient();
     if(!client) return [];
     
@@ -380,69 +210,40 @@ class DataService {
     
     if (storeId && storeId !== 'all') query = query.eq('store_id', storeId);
     
-    if (productId) query = query.eq('product_id', productId);
-    
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    
-    return (data || []).filter((b: any) => b.quantity >= 0).map((b: any) => ({
+    const { data } = await query;
+    return (data || []).map((b: any) => ({
         ...b,
         store_name: b.store?.name
     }));
   }
 
-  async getTransactions(filterType?: string, limit = 200, startDate?: string, storeId?: string): Promise<Transaction[]> {
+  async getTransactions(filterType?: string, limit = 200, startDate?: string): Promise<Transaction[]> {
     const client = this.getClient();
     if(!client) return [];
     
-    // Filter out undone transactions
-    let query = client
-      .from('transactions')
+    let query = client.from('transactions')
       .select('*, product:products(name), store:stores(name)')
       .eq('is_undone', false)
       .order('timestamp', { ascending: false })
       .limit(limit);
       
     if (filterType && filterType !== 'ALL') query = query.eq('type', filterType);
-    if (startDate) query = query.gte('timestamp', startDate);
     
-    // Store isolation for Logs
-    if (storeId && storeId !== 'all') {
-        query = query.eq('store_id', storeId);
-    } else {
-        const user = authService.getCurrentUser();
-        if (user && user.permissions.store_scope === 'LIMITED') {
-             query = query.in('store_id', user.allowed_store_ids || []);
-        }
-    }
-
-    const { data, error } = await query;
-    if (error) throw new Error(error.message);
-    
+    const { data } = await query;
     const allTransactions = data || [];
 
-    // --- LOG PERMISSION FILTERING ---
     const user = authService.getCurrentUser();
     if (!user) return [];
 
     const logLevel = user.permissions.logs_level;
-
-    if (logLevel === 'A' || logLevel === 'B' || logLevel === 'C') {
-        return allTransactions;
-    } else {
-        // Level D: Only see Self
-        return allTransactions.filter(t => t.operator === user.username);
-    }
+    if (logLevel === 'A' || logLevel === 'B' || logLevel === 'C') return allTransactions;
+    return allTransactions.filter(t => t.operator === user.username);
   }
 
   async getAuditLogs(limit = 100): Promise<AuditLog[]> {
       const client = this.getClient();
       if (!client) return [];
-      const { data, error } = await client.from('system_audit_logs')
-        .select('*')
-        .order('timestamp', { ascending: false })
-        .limit(limit);
-      if (error) throw new Error(error.message);
+      const { data } = await client.from('system_audit_logs').select('*').order('timestamp', { ascending: false }).limit(limit);
       return data || [];
   }
   
@@ -461,11 +262,6 @@ class DataService {
 
       if (storeId && storeId !== 'all') query = query.eq('store_id', storeId);
       
-      const user = authService.getCurrentUser();
-      if (user && user.permissions.store_scope === 'LIMITED') {
-          query = query.in('store_id', user.allowed_store_ids || []);
-      }
-
       const { data } = await query;
       if (!data) return [];
 
@@ -491,7 +287,7 @@ class DataService {
         .sort((a,b) => a.date.localeCompare(b.date));
   }
 
-  // --- ATOMIC OPERATIONS (RPC) ---
+  // --- ATOMIC OPERATIONS ---
 
   async updateStock(
       productId: string, 
@@ -505,18 +301,8 @@ class DataService {
       if(!client) throw new Error("No DB");
 
       const user = authService.getCurrentUser();
-      if (!batchId) throw new Error("Batch ID required");
-
-      if (user?.permissions.store_scope === 'LIMITED') {
-          if (!user.allowed_store_ids.includes(storeId)) {
-               throw new Error("无权操作此门店");
-          }
-      }
-
       const { data: batch } = await client.from('batches').select('*').eq('id', batchId).single();
       const { data: product } = await client.from('products').select('*').eq('id', productId).single();
-
-      const snapshot = { batch, product, tx_context: 'manual_update' };
 
       const { error } = await client.rpc('operate_stock', {
           p_batch_id: batchId,
@@ -524,47 +310,45 @@ class DataService {
           p_type: type,
           p_note: note,
           p_operator: user?.username || 'System',
-          p_snapshot: snapshot
+          p_snapshot: { batch, product, tx_context: 'manual_update' }
       });
 
       if (error) throw new Error(error.message);
   }
 
-  async processStockOut(productId: string, storeId: string, quantity: number, note?: string): Promise<void> {
-    const client = this.getClient();
-    if(!client) throw new Error("No DB");
-    
-    const user = authService.getCurrentUser();
-    if (user?.permissions.store_scope === 'LIMITED') {
-        if (!user.allowed_store_ids.includes(storeId)) throw new Error("无权操作此门店");
-    }
+  // FIFO Stock Out
+  async processStockOut(productId: string, storeId: string, quantity: number, note: string): Promise<void> {
+      const client = this.getClient();
+      if (!client) throw new Error("No DB");
 
-    // Strict store filter
-    let query = client.from('batches').select('*').eq('product_id', productId).gt('quantity', 0).or('is_archived.is.null,is_archived.eq.false').eq('store_id', storeId).order('expiry_date', { ascending: true });
+      // Get batches with quantity > 0, sorted by expiry (FIFO)
+      const { data: batches, error } = await client
+          .from('batches')
+          .select('*')
+          .eq('product_id', productId)
+          .eq('store_id', storeId)
+          .gt('quantity', 0)
+          .order('expiry_date', { ascending: true, nullsFirst: false })
+          .order('created_at', { ascending: true });
 
-    const { data: batches } = await query;
-    const totalAvailable = batches?.reduce((acc, b) => acc + b.quantity, 0) || 0;
-    if (totalAvailable < quantity) throw new Error(`当前门店库存不足。可用: ${totalAvailable}`);
+      if (error) throw new Error(error.message);
+      if (!batches || batches.length === 0) throw new Error("库存不足 (无可用批次)");
 
-    let remaining = quantity;
-    const { data: product } = await client.from('products').select('*').eq('id', productId).single();
+      const totalAvailable = batches.reduce((sum, b) => sum + b.quantity, 0);
+      if (totalAvailable < quantity) throw new Error(`库存不足 (可用: ${totalAvailable}, 需: ${quantity})`);
 
-    for (const batch of (batches || [])) {
-        if (remaining <= 0) break;
-        const deduct = Math.min(batch.quantity, remaining);
-        
-        const { error } = await client.rpc('operate_stock', {
-            p_batch_id: batch.id,
-            p_qty_change: -deduct,
-            p_type: 'OUT',
-            p_note: note ? `${note} (FIFO)` : 'FIFO 出库',
-            p_operator: user?.username || 'System',
-            p_snapshot: { batch, product, tx_context: 'FIFO' }
-        });
-
-        if (error) throw new Error(`FIFO Failed: ${error.message}`);
-        remaining -= deduct;
-    }
+      let remaining = quantity;
+      
+      for (const batch of batches) {
+          if (remaining <= 0) break;
+          
+          const take = Math.min(batch.quantity, remaining);
+          
+          // Use updateStock to handle transaction logging and safety
+          await this.updateStock(productId, storeId, take, 'OUT', note, batch.id);
+          
+          remaining -= take;
+      }
   }
 
   async adjustBatch(batchId: string, updates: Partial<Batch>): Promise<void> {
@@ -578,13 +362,6 @@ class DataService {
       if (updates.quantity !== undefined && oldBatch) {
           const delta = updates.quantity - oldBatch.quantity;
           if (delta !== 0) {
-              if (user?.permissions.store_scope === 'LIMITED') {
-                  if (oldBatch.store_id && !user.allowed_store_ids.includes(oldBatch.store_id)) {
-                       throw new Error("无权操作此门店");
-                  }
-              }
-
-              // Use RPC directly for ADJUST
               const { error } = await client.rpc('operate_stock', {
                   p_batch_id: batchId,
                   p_qty_change: delta,
@@ -598,12 +375,10 @@ class DataService {
           delete updates.quantity;
       }
 
-      // Handle property adjustments
       if (Object.keys(updates).length > 0) {
           const changeDesc = Object.keys(updates).map(k => `${k}: [${(oldBatch as any)[k]}]->[${(updates as any)[k]}]`).join(', ');
           
           await client.from('batches').update(updates).eq('id', batchId);
-          
           await client.from('transactions').insert({
               id: crypto.randomUUID(),
               type: 'ADJUST',
@@ -614,47 +389,16 @@ class DataService {
               timestamp: new Date().toISOString(),
               note: `修改批次属性: ${changeDesc}`,
               operator: user?.username || 'System',
-              snapshot_data: { old: oldBatch, updates } // Full snapshot for undo
+              snapshot_data: { old: oldBatch, updates }
           });
       }
-  }
-
-  async deleteBatch(batchId: string): Promise<void> {
-      const client = this.getClient();
-      if(!client) throw new Error("No DB");
-      
-      const user = authService.getCurrentUser();
-      const { data: batch } = await client.from('batches').select('*, product:products(*)').eq('id', batchId).single();
-
-      // Always Soft Delete
-      const { error } = await client.from('batches').update({ is_archived: true }).eq('id', batchId);
-      if (error) throw new Error(error.message);
-
-      await client.from('transactions').insert({
-          id: crypto.randomUUID(),
-          type: 'DELETE',
-          batch_id: batchId,
-          product_id: batch?.product_id,
-          store_id: batch?.store_id,
-          quantity: 0,
-          timestamp: new Date().toISOString(),
-          note: `删除了批次 ${batch?.batch_number}`,
-          operator: user?.username || 'System',
-          snapshot_data: { deleted_batch: batch }
-      });
   }
 
   async createBatch(batch: Omit<Batch, 'id' | 'created_at'>): Promise<string> {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       
-      const user = authService.getCurrentUser();
-      if (user?.permissions.store_scope === 'LIMITED') {
-          if (!user.allowed_store_ids.includes(batch.store_id)) throw new Error("无权操作此门店");
-      }
-
       const id = crypto.randomUUID();
-      // Insert with initial 0
       const { error } = await client.from('batches').insert({ ...batch, id, quantity: 0, created_at: new Date().toISOString(), is_archived: false });
       if (error) throw new Error(error.message);
 
@@ -664,56 +408,20 @@ class DataService {
       return id;
   }
 
-  // --- UNDO ---
   async undoTransaction(transactionId: string): Promise<void> {
       const client = this.getClient();
       if(!client) throw new Error("No DB");
       const { data: tx } = await client.from('transactions').select('*').eq('id', transactionId).single();
-      if (!tx) throw new Error("记录不存在");
-
       const user = authService.getCurrentUser();
-      if (!user) return;
-      const p = user.permissions;
       
-      // Permission Checks
-      if (p.logs_level === 'D') {
-          if (tx.operator !== user.username) throw new Error("权限不足: D级用户只能撤销自己的操作");
-      }
-      else if (p.logs_level === 'C') {
-          if (tx.operator !== user.username) throw new Error("权限不足: C级用户只能撤销自己的操作");
-      }
-      else if (p.logs_level === 'B') {
-          // B Level: Can undo self OR lower level
-          if (tx.operator !== user.username) {
-              const { data: opUser } = await client.from('users').select('role_level').eq('username', tx.operator).single();
-              // If operator is found and has equal/higher level (lower number), Deny
-              // Note: role_level 0 is highest. so if opUser.level <= myLevel, deny.
-              if (opUser && opUser.role_level <= user.role_level) {
-                  throw new Error("权限不足: B级用户只能撤销低等级用户的操作");
-              }
-          }
-      }
-      // A Level: Undo Any (No check needed)
-
       await this.logClientAction('UNDO_TRANSACTION', { transactionId });
       
-      // Handle different types
       if (tx.type === 'ADJUST') {
-          // Snapshot Rollback Strategy
           const oldData = tx.snapshot_data?.old;
           if (oldData) {
-              // Be careful not to overwrite IDs or unrelated fields if schema drifted, 
-              // but for this app assuming stability. 
-              // We remove 'id' from update payload to be safe.
               const { id, ...updatePayload } = oldData;
-              
-              if (tx.batch_id) {
-                  await client.from('batches').update(updatePayload).eq('id', tx.batch_id);
-              } else if (tx.product_id) {
-                  await client.from('products').update(updatePayload).eq('id', tx.product_id);
-              }
-          } else {
-               throw new Error("无法撤销：缺少原始数据快照");
+              if (tx.batch_id) await client.from('batches').update(updatePayload).eq('id', tx.batch_id);
+              else if (tx.product_id) await client.from('products').update(updatePayload).eq('id', tx.product_id);
           }
       } else if (['IN', 'OUT', 'IMPORT', 'RESTORE'].includes(tx.type)) {
           const inverseQty = -tx.quantity; 
@@ -726,18 +434,11 @@ class DataService {
               p_snapshot: { original_tx: tx, context: 'UNDO' }
           });
           if (error) throw new Error(error.message);
-      } 
-      else if (tx.type === 'DELETE') {
-          // Soft Delete Restore
-          if (tx.batch_id) {
-              await client.from('batches').update({ is_archived: false }).eq('id', tx.batch_id);
-          }
-          if (tx.product_id && !tx.batch_id) {
-              await client.from('products').update({ is_archived: false }).eq('id', tx.product_id);
-          }
+      } else if (tx.type === 'DELETE') {
+          if (tx.batch_id) await client.from('batches').update({ is_archived: false }).eq('id', tx.batch_id);
+          if (tx.product_id && !tx.batch_id) await client.from('products').update({ is_archived: false }).eq('id', tx.product_id);
       }
 
-      // Mark as undone
       await client.from('transactions').update({ is_undone: true }).eq('id', transactionId);
   }
 }
