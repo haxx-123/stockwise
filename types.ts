@@ -8,7 +8,7 @@ export type Store = {
   managers?: string[]; // User IDs
   viewers?: string[]; // User IDs
   is_archived?: boolean; 
-  children?: Store[]; // Virtual
+  children?: Store[]; // Virtual field for UI hierarchy
 };
 
 export type Product = {
@@ -53,6 +53,13 @@ export type OperationLog = {
     operator_id: string; // Username
     created_at: string;
     is_revoked: boolean;
+};
+
+export type LogFilter = {
+    type: string;
+    operator: string;
+    startDate: string;
+    endDate: string;
 };
 
 // Legacy Transaction (Keep for charts if needed, but Log is primary now)
@@ -108,19 +115,27 @@ export type User = {
 
 export type Announcement = {
   id: string;
+  type: 'ANNOUNCEMENT' | 'SUGGESTION'; // Differentiate normal vs suggestion
   title: string;
-  content: string; 
-  creator: string;
+  content: string; // HTML Content
+  creator: string; // Username
   creator_id?: string;
-  target_users: string[]; 
-  valid_until: string;
+  creator_role?: RoleLevel; // NEW: Store role level to optimize popup logic for 00 admins
+  
+  target_users: string[]; // User IDs allowed to see this. For Suggestion, it's ['admin_00']
+  
   popup_config: {
       enabled: boolean;
-      duration: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'FOREVER';
+      frequency: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'FOREVER';
   };
-  allow_delete: boolean;
-  is_force_deleted?: boolean; 
-  read_by?: string[]; 
+  
+  allow_hide: boolean; // Can user hide it from their list?
+  
+  is_force_deleted?: boolean; // Physical soft delete (Revoked)
+  
+  read_by?: string[]; // User IDs who opened details
+  hidden_by?: string[]; // User IDs who hid this from "My Announcements"
+  
   created_at: string;
 };
 

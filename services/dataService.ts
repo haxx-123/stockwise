@@ -1,5 +1,5 @@
 
-import { Product, Batch, OperationLog, Store, User, Announcement, AuditLog, RoleLevel, UserPermissions } from '../types';
+import { Product, Batch, OperationLog, Store, User, Announcement, AuditLog, RoleLevel, UserPermissions, LogFilter } from '../types';
 import { getSupabaseClient } from './supabaseClient';
 import { authService, DEFAULT_PERMISSIONS } from './authService';
 
@@ -46,9 +46,32 @@ class DataService {
       await client.from('users').update(payload).eq('id', id);
   }
 
+  async createUser(user: Partial<User>): Promise<void> {
+      const client = this.getClient();
+      if(!client) return;
+      // Flatten permissions for insertion
+      let payload: any = { ...user };
+      if (user.permissions) {
+          payload = { ...payload, ...user.permissions };
+          delete payload.permissions;
+      }
+      // Ensure ID
+      if (!payload.id) payload.id = crypto.randomUUID();
+      payload.is_archived = false;
+      
+      const { error } = await client.from('users').insert(payload);
+      if (error) throw error;
+  }
+
+  async deleteUser(id: string): Promise<void> {
+      const client = this.getClient();
+      if(!client) return;
+      await client.from('users').update({ is_archived: true }).eq('id', id);
+  }
+
   // --- Core Operation Logic (Atomic Logs) ---
   
-  async logOperation(type: 'IN' | 'OUT' | 'ADJUST' | 'DELETE' | 'IMPORT', targetId: string, delta: number, snapshot: any): Promise<void> {
+  async logOperation(type: 'IN' | 'OUT' | 'ADJUST' | 'DELETE' | 'IMPORT' | 'RESTORE', targetId: string, delta: number, snapshot: any): Promise<void> {
       const client = this.getClient();
       if (!client) return;
       const user = authService.getCurrentUser();
@@ -71,51 +94,52 @@ class DataService {
       const { data: log } = await client.from('operation_logs').select('*').eq('id', logId).single();
       if (!log || log.is_revoked) throw new Error("操作已撤销或不存在");
 
-      // Atomic Undo Logic
+      // Atomic Undo Logic based on Action Type
       if (log.action_type === 'IN' || log.action_type === 'IMPORT') {
-          // Undo IN: Deduct stock. Check if sufficient.
           const { data: batch } = await client.from('batches').select('quantity').eq('id', log.target_id).single();
-          if (!batch || batch.quantity < log.change_delta) throw new Error("当前库存不足以撤销入库");
-          
+          if (!batch) throw new Error("批次已不存在，无法撤销入库");
+          if (batch.quantity < log.change_delta) throw new Error(`库存不足 (当前: ${batch.quantity})，无法撤销入库数量 ${log.change_delta}`);
           await client.from('batches').update({ quantity: batch.quantity - log.change_delta }).eq('id', log.target_id);
       } 
       else if (log.action_type === 'OUT') {
-          // Undo OUT: Add stock back.
           const { data: batch } = await client.from('batches').select('quantity').eq('id', log.target_id).single();
           if (batch) {
-              await client.from('batches').update({ quantity: batch.quantity + Math.abs(log.change_delta) }).eq('id', log.target_id);
+              const qtyToAdd = Math.abs(log.change_delta);
+              await client.from('batches').update({ quantity: batch.quantity + qtyToAdd }).eq('id', log.target_id);
+          } else {
+              throw new Error("批次未找到，无法退回库存");
           }
       }
       else if (log.action_type === 'DELETE') {
-          // Undo DELETE: Restore from snapshot
           if (log.snapshot_data && log.snapshot_data.deleted_batch) {
               const b = log.snapshot_data.deleted_batch;
-              // Restore batch. If product deleted, restore product too? Assuming product soft deleted.
-              // For robustness, we check product existence
               const { data: prod } = await client.from('products').select('id').eq('id', b.product_id).single();
-              if (!prod && log.snapshot_data.deleted_product) {
-                  // Restore Product first
-                  await client.from('products').insert(log.snapshot_data.deleted_product);
+              if (!prod && b.product) {
+                  await client.from('products').upsert(b.product); 
               }
-              // Restore Batch
-              await client.from('batches').insert(b);
+              const { data: existing } = await client.from('batches').select('id').eq('id', b.id).single();
+              if (existing) {
+                  await client.from('batches').update({ 
+                      is_archived: false, 
+                      quantity: b.quantity 
+                  }).eq('id', b.id);
+              } else {
+                  await client.from('batches').insert(b);
+              }
           }
       }
       else if (log.action_type === 'ADJUST') {
-          // Undo ADJUST: Revert to old value
           const old = log.snapshot_data?.old;
           if (old) {
-              // Only revert fields that were changed. Simplest is to revert whole batch object minus id
-              const { id, ...rest } = old;
+              const { id, created_at, updated_at, ...rest } = old;
               await client.from('batches').update(rest).eq('id', log.target_id);
           }
       }
 
-      // Mark as Revoked
       await client.from('operation_logs').update({ is_revoked: true }).eq('id', logId);
   }
 
-  // --- Inventory Actions with Logging ---
+  // --- Inventory Actions ---
 
   async createBatch(batch: any): Promise<void> {
       const client = this.getClient();
@@ -124,49 +148,51 @@ class DataService {
       const newBatch = { ...batch, id, created_at: new Date().toISOString() };
       
       await client.from('batches').insert(newBatch);
-      await this.logOperation('IN', id, batch.quantity, { name: 'Batch Created' });
+      const { data: prod } = await client.from('products').select('name, unit_name').eq('id', batch.product_id).single();
+      
+      await this.logOperation('IN', id, batch.quantity, { 
+          product_name: prod?.name, 
+          unit: prod?.unit_name,
+          note: '新批次入库' 
+      });
   }
 
-  // Generic Stock Update (Used for Bill Open)
   async updateStock(productId: string, storeId: string, quantity: number, type: 'IN'|'OUT', note: string, batchId: string): Promise<void> {
       const client = this.getClient();
       if(!client) return;
-      
       const { data: batch } = await client.from('batches').select('*').eq('id', batchId).single();
       if (!batch) throw new Error("Batch not found");
 
       let newQty = batch.quantity;
-      let delta = quantity;
+      let delta = quantity; 
+      let logDelta = quantity; 
       
       if (type === 'OUT') {
           if (batch.quantity < quantity) throw new Error("库存不足");
           newQty -= quantity;
-          delta = -quantity;
+          logDelta = -quantity;
       } else {
           newQty += quantity;
       }
 
       await client.from('batches').update({ quantity: newQty }).eq('id', batchId);
+      const { data: prod } = await client.from('products').select('name, unit_name').eq('id', productId).single();
       
-      // Detailed Snapshot for Log
-      const { data: prod } = await client.from('products').select('name, unit_name, split_unit_name').eq('id', productId).single();
       const snapshot = {
           product_name: prod?.name,
-          unit: type==='IN' ? prod?.unit_name : prod?.split_unit_name, // Rough guess, accurate in UI
+          unit: prod?.unit_name, 
           note
       };
       
-      await this.logOperation(type, batchId, delta, snapshot);
+      await this.logOperation(type, batchId, logDelta, snapshot);
   }
 
   async processStockOut(productId: string, storeId: string, quantity: number, note: string): Promise<void> {
-      // FIFO Logic handled in Component or Service
-      // This wrapper ensures we log each step
       const client = this.getClient();
       if(!client) return;
       const { data: batches } = await client.from('batches').select('*').eq('product_id', productId).eq('store_id', storeId).gt('quantity',0).order('expiry_date',{ascending:true});
       
-      if(!batches) throw new Error("无库存");
+      if(!batches || batches.length === 0) throw new Error("无库存");
       let remaining = quantity;
       
       for (const b of batches) {
@@ -175,38 +201,37 @@ class DataService {
           await this.updateStock(productId, storeId, take, 'OUT', note, b.id);
           remaining -= take;
       }
-      if(remaining > 0) throw new Error("库存不足");
+      if(remaining > 0) throw new Error("库存不足 (所有批次已扣完)");
   }
 
   async adjustBatch(bid: string, updates: any): Promise<void> {
       const client = this.getClient();
       if(!client) return;
-      
-      const { data: old } = await client.from('batches').select('*').eq('id', bid).single();
+      const { data: old } = await client.from('batches').select('*, product:products(name, unit_name)').eq('id', bid).single();
       await client.from('batches').update(updates).eq('id', bid);
-      
-      // Calculate delta if qty changed
       let delta = 0;
       if (updates.quantity !== undefined) {
           delta = updates.quantity - old.quantity;
       }
-      
-      await this.logOperation('ADJUST', bid, delta, { old, new: updates });
+      const snapshot = {
+          product_name: old.product?.name,
+          old: old,
+          new: updates
+      };
+      await this.logOperation('ADJUST', bid, delta, snapshot);
   }
 
   async deleteBatch(batchId: string): Promise<void> {
       const client = this.getClient();
       if(!client) return;
-      
-      // Get full snapshot before delete
       const { data: batch } = await client.from('batches').select('*, product:products(*)').eq('id', batchId).single();
-      
-      // We use Soft Delete usually, but if hard delete requested:
-      // await client.from('batches').delete().eq('id', batchId);
-      // Using Archive as per requirement
+      if (!batch) return; 
       await client.from('batches').update({ is_archived: true, quantity: 0 }).eq('id', batchId);
-      
-      await this.logOperation('DELETE', batchId, 0, { deleted_batch: batch });
+      const snapshot = {
+          product_name: batch.product?.name, 
+          deleted_batch: batch
+      };
+      await this.logOperation('DELETE', batchId, -batch.quantity, snapshot);
   }
 
   // --- Basic Getters ---
@@ -229,23 +254,64 @@ class DataService {
   async getBatches(storeId?: string): Promise<Batch[]> {
     const client = this.getClient();
     if(!client) return [];
+    
+    // Logic: If storeId is provided, check if it's a parent store.
+    // If parent, fetch all batches from its children.
+    let targetStoreIds: string[] = [];
+    
+    if (storeId && storeId !== 'all') {
+        // 1. Check if store is parent
+        const { data: children } = await client.from('stores').select('id').eq('parent_id', storeId);
+        if (children && children.length > 0) {
+            // It is a parent, include all children IDs
+            targetStoreIds = children.map((c: any) => c.id);
+        } else {
+            // It is a child or independent
+            targetStoreIds = [storeId];
+        }
+    }
+
     let query = client.from('batches').select('*, store:stores(name)');
     query = query.or('is_archived.is.null,is_archived.eq.false');
-    if (storeId && storeId !== 'all') query = query.eq('store_id', storeId);
+    
+    if (targetStoreIds.length > 0) {
+        query = query.in('store_id', targetStoreIds);
+    }
+    
     const { data } = await query;
     return (data || []).map((b: any) => ({...b, store_name: b.store?.name}));
   }
 
-  // --- Logs & Announcements ---
-  async getOperationLogs(filter: any = {}, limit = 200): Promise<OperationLog[]> {
+  // --- Logs ---
+  async getOperationLogs(filter: LogFilter = { type: 'ALL', operator: '', startDate: '', endDate: '' }, page = 1, pageSize = 50): Promise<{ data: OperationLog[], total: number }> {
       const client = this.getClient();
-      if(!client) return [];
-      let query = client.from('operation_logs').select('*').eq('is_revoked', false).order('created_at', { ascending: false }).limit(limit);
-      // Add filters if needed
-      const { data } = await query;
-      return data || [];
+      if(!client) return { data: [], total: 0 };
+      
+      let query = client.from('operation_logs').select('*', { count: 'exact' }).eq('is_revoked', false);
+      
+      if (filter.type !== 'ALL') query = query.eq('action_type', filter.type);
+      if (filter.operator) query = query.ilike('operator_id', `%${filter.operator}%`);
+      if (filter.startDate) query = query.gte('created_at', filter.startDate);
+      if (filter.endDate) {
+          const end = new Date(filter.endDate);
+          end.setDate(end.getDate() + 1);
+          query = query.lt('created_at', end.toISOString());
+      }
+
+      const from = (page - 1) * pageSize;
+      const to = from + pageSize - 1;
+      
+      const { data, count, error } = await query.order('created_at', { ascending: false }).range(from, to);
+      
+      if (error) {
+          console.error(error);
+          return { data: [], total: 0 };
+      }
+      
+      return { data: data || [], total: count || 0 };
   }
 
+  // --- Announcements ---
   async getAnnouncements(): Promise<Announcement[]> {
       const client = this.getClient();
       if (!client) return [];
@@ -253,24 +319,66 @@ class DataService {
       return data || [];
   }
 
-  async createAnnouncement(ann: any): Promise<void> {
+  async createAnnouncement(ann: Partial<Announcement>): Promise<void> {
       const client = this.getClient();
       if(!client) return;
-      await client.from('announcements').insert({ ...ann, id: crypto.randomUUID(), created_at: new Date().toISOString(), is_force_deleted: false, read_by: [] });
+      const user = authService.getCurrentUser();
+      await client.from('announcements').insert({
+          ...ann,
+          id: crypto.randomUUID(),
+          created_at: new Date().toISOString(),
+          is_force_deleted: false,
+          read_by: [],
+          hidden_by: [],
+          type: ann.type || 'ANNOUNCEMENT',
+          creator_role: user?.role_level
+      });
   }
 
-  async deleteAnnouncement(id: string, force = false): Promise<void> {
+  async updateAnnouncement(id: string, updates: Partial<Announcement>): Promise<void> {
       const client = this.getClient();
       if(!client) return;
-      if (force) await client.from('announcements').update({ is_force_deleted: true }).eq('id', id);
-      else {
-          const user = authService.getCurrentUser();
-          const { data } = await client.from('announcements').select('read_by').eq('id', id).single();
-          if(data && user) await client.from('announcements').update({ read_by: [...(data.read_by||[]), `HIDDEN_BY_${user.id}`] }).eq('id', id);
+      await client.from('announcements').update(updates).eq('id', id);
+  }
+
+  async deleteAnnouncement(id: string, physical = false): Promise<void> {
+      const client = this.getClient();
+      if(!client) return;
+      if (physical) {
+          await client.from('announcements').update({ is_force_deleted: true }).eq('id', id);
       }
   }
 
-  // --- Client & Device Audit ---
+  async hideAnnouncement(id: string, userId: string): Promise<void> {
+      const client = this.getClient();
+      if(!client) return;
+      const { data } = await client.from('announcements').select('hidden_by').eq('id', id).single();
+      const current = data?.hidden_by || [];
+      if(!current.includes(userId)) {
+          await client.from('announcements').update({ hidden_by: [...current, userId] }).eq('id', id);
+      }
+  }
+
+  async markAnnouncementRead(id: string, userId: string): Promise<void> {
+      const client = this.getClient();
+      if(!client) return;
+      const { data } = await client.from('announcements').select('read_by').eq('id', id).single();
+      const current = data?.read_by || [];
+      if(!current.includes(userId)) {
+          await client.from('announcements').update({ read_by: [...current, userId] }).eq('id', id);
+      }
+  }
+
+  async showAnnouncementAgain(id: string, userId: string): Promise<void> {
+       const client = this.getClient();
+       if(!client) return;
+       const { data } = await client.from('announcements').select('hidden_by').eq('id', id).single();
+       const current = data?.hidden_by || [];
+       const updated = current.filter((uid: string) => uid !== userId);
+       await client.from('announcements').update({ hidden_by: updated }).eq('id', id);
+  }
+
+  // --- Audit ---
   async logClientAction(operation: string, details: any): Promise<void> {
       const client = this.getClient();
       if (!client) return;
@@ -287,22 +395,34 @@ class DataService {
   }
 
   async getStockFlowStats(days: number, storeId: string): Promise<any[]> {
-      // Re-implemented to use operation_logs for accuracy if possible, but using basic logic for now
-      return []; // Placeholder for chart data logic
+      return []; 
   }
   
-  // Store Mgmt
   async deleteStore(id: string): Promise<void> {
       const client = this.getClient();
       if(!client) return;
+      
+      const { count } = await client.from('batches').select('*', { count: 'exact', head: true }).eq('store_id', id).gt('quantity', 0);
+      if (count && count > 0) {
+          throw new Error("该门店尚有库存，无法删除！");
+      }
+
       await client.from('stores').update({ is_archived: true }).eq('id', id);
   }
   
-  // Products
   async updateProduct(pid: string, updates: any): Promise<void> {
       const client = this.getClient();
       if(!client) return;
       await client.from('products').update(updates).eq('id', pid);
+  }
+
+  async createProduct(product: any): Promise<string | null> {
+      const client = this.getClient();
+      if(!client) return null;
+      const id = product.id || crypto.randomUUID();
+      const { data, error } = await client.from('products').insert({ ...product, id, is_archived: false }).select('id').single();
+      if (error) throw error;
+      return id;
   }
 }
 

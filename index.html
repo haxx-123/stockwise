@@ -16,16 +16,23 @@
             colors: {
               prism: { 
                 bg: '#e0e0e0',
-                text: '#000000' // Forced Black for Light Mode
+                text: '#000000'
               }
             },
             animation: {
-              'fade-in': 'fadeIn 0.3s ease-out',
-              'slide-up': 'slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
+              'fade-in': 'fadeIn 0.3s ease-out forwards',
+              'slide-up': 'slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+              'page-enter': 'pageEnter 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards',
+              'scale-in': 'scaleIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards',
             },
             keyframes: {
               fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
-              slideUp: { '0%': { transform: 'translateY(20px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } }
+              slideUp: { '0%': { transform: 'translateY(30px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } },
+              pageEnter: { 
+                '0%': { opacity: '0', transform: 'translateX(30px) scale(0.98)' }, 
+                '100%': { opacity: '1', transform: 'translateX(0) scale(1)' } 
+              },
+              scaleIn: { '0%': { transform: 'scale(0.9)', opacity: '0' }, '100%': { transform: 'scale(1)', opacity: '1' } }
             }
           }
         }
@@ -41,45 +48,71 @@
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #888888; /* Mid-grey base for glass effect */
-        color: #000000; /* Forced Black Text */
         overflow-x: hidden;
         -webkit-tap-highlight-color: transparent;
+        transition: background-color 0.4s ease, color 0.4s ease;
       }
 
-      /* PRISM DEEP GLASSMORPHISM THEME */
-      .glass-panel {
-        background: rgba(255, 255, 255, 0.15) !important;
-        backdrop-filter: blur(25px) !important;
-        -webkit-backdrop-filter: blur(25px) !important;
-        border: 1px solid rgba(255, 255, 255, 0.2) !important;
-        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-        color: #000000; /* Forced Black Text in panels */
+      /* --- Global Interactions --- */
+      /* Button Press Scale Effect */
+      button, .clickable {
+        transition: transform 0.1s cubic-bezier(0.4, 0, 0.2, 1), background-color 0.2s, box-shadow 0.2s;
+      }
+      button:active, .clickable:active {
+        transform: scale(0.95);
+      }
+
+      /* --- Theme: PRISM --- */
+      html.theme-prism body {
+        background-color: #888888; 
+        color: #000000;
+      }
+      html.theme-prism .glass-panel {
+        background: rgba(255, 255, 255, 0.25) !important;
+        backdrop-filter: blur(30px) saturate(140%) !important;
+        -webkit-backdrop-filter: blur(30px) saturate(140%) !important;
+        border: 1px solid rgba(255, 255, 255, 0.3) !important;
+        box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.25);
+        color: #000000 !important;
+      }
+      /* Inputs in Prism */
+      html.theme-prism input, html.theme-prism select, html.theme-prism textarea {
+          background: rgba(255,255,255,0.4) !important;
+          border: 1px solid rgba(255,255,255,0.3) !important;
+          color: #000000 !important;
+          backdrop-filter: blur(10px);
       }
       
-      /* Dark Mode Overrides */
-      html.dark body { background-color: #000000 !important; color: #ffffff !important; }
-      html.dark .glass-panel {
-        background: rgba(0, 0, 0, 0.4) !important;
-        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+      /* --- Theme: DARK --- */
+      html.theme-dark body {
+        background-color: #050505;
+        color: #ffffff;
+      }
+      html.theme-dark .glass-panel {
+        background: rgba(20, 20, 20, 0.7) !important;
+        backdrop-filter: blur(20px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.08) !important;
+        box-shadow: 0 10px 30px -10px rgba(0,0,0,0.5);
         color: #ffffff !important;
       }
-      /* Inputs */
-      input, select, textarea {
-          background: rgba(255,255,255,0.2) !important;
-          border: 1px solid rgba(0,0,0,0.1) !important;
-          color: #000000 !important;
+      
+      /* --- Theme: LIGHT --- */
+      html.theme-light body {
+        background-color: #f0f2f5;
+        color: #000000;
       }
-      html.dark input, html.dark select, html.dark textarea {
-          background: rgba(0,0,0,0.5) !important;
-          border-color: rgba(255,255,255,0.3) !important;
-          color: white !important;
+      html.theme-light .glass-panel {
+        background: #ffffff !important;
+        border: 1px solid #e5e7eb !important;
+        box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05), 0 2px 4px -1px rgba(0,0,0,0.03);
+        backdrop-filter: none !important;
       }
 
-      .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+      /* Scrollbar */
+      .custom-scrollbar::-webkit-scrollbar { width: 5px; height: 5px; }
       .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 99px; }
-      html.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.15); border-radius: 10px; }
+      html.theme-dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.2); }
     </style>
   <script type="importmap">
 {
@@ -87,6 +120,7 @@
     "react/": "https://aistudiocdn.com/react@^19.2.1/",
     "react": "https://aistudiocdn.com/react@^19.2.1",
     "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.1/",
+    "react-dom": "https://aistudiocdn.com/react-dom@^19.2.1",
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
     "recharts": "https://aistudiocdn.com/recharts@^3.5.1",
     "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2",
@@ -98,11 +132,12 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {
-          navigator.serviceWorker.register('/sw.js');
+          // Use relative path to avoid origin mismatch issues in previews
+          navigator.serviceWorker.register('./sw.js')
+            .catch(err => console.error('SW registration failed:', err));
         });
       }
     </script>

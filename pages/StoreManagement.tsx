@@ -1,11 +1,11 @@
 
-
 import React, { useState, useEffect } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
 import { Store, User } from '../types';
 import { getSupabaseClient } from '../services/supabaseClient';
 import { authService } from '../services/authService';
+import { createPortal } from 'react-dom';
 
 export const StoreManagement: React.FC = () => {
     const [stores, setStores] = useState<Store[]>([]);
@@ -29,7 +29,15 @@ export const StoreManagement: React.FC = () => {
     const loadData = async () => {
         const [s, u] = await Promise.all([dataService.getStores(), dataService.getUsers()]);
         setStores(s);
-        setUsers(u.filter(u => u.role_level !== 0)); // Exclude 00 admin from selection lists
+        // Special logic: 00 Admin stealth mode. 
+        // If current user is NOT 00, filter out any user with role 00 from the selection list.
+        // If current user IS 00, they can see everyone.
+        // Also exclude 00 from "users" array if current user is not 00 to prevent adding them as managers visibly
+        if (currentUser?.role_level !== 0) {
+            setUsers(u.filter(u => u.role_level !== 0));
+        } else {
+            setUsers(u);
+        }
     };
 
     const handleCreate = () => {
@@ -61,6 +69,7 @@ export const StoreManagement: React.FC = () => {
         if(!window.confirm("确定删除？必须库存归零才能删除。")) return;
         try {
             await dataService.deleteStore(id);
+            window.dispatchEvent(new Event('REFRESH_STORES'));
             loadData();
         } catch(e: any) { alert(e.message); }
     };
@@ -88,7 +97,6 @@ export const StoreManagement: React.FC = () => {
             }
 
             // Handle Parent/Child Links
-            // Reset all first
             if (storeId) {
                 await client.from('stores').update({ parent_id: null }).eq('parent_id', storeId);
                 if (isParent) {
@@ -96,9 +104,29 @@ export const StoreManagement: React.FC = () => {
                 }
             }
 
+            window.dispatchEvent(new Event('REFRESH_STORES'));
             setIsModalOpen(false);
             loadData();
         } catch (e: any) { alert(e.message); }
+    };
+
+    const switchStore = (storeId: string) => {
+        // Dispatch global event or call a method to switch store
+        window.dispatchEvent(new CustomEvent('SWITCH_STORE_ID', { detail: storeId }));
+    };
+
+    // Determine edit permission: 00 admin can always edit/delete
+    const canEdit = (s: Store) => {
+        if (currentUser?.role_level === 0) return true;
+        // Normal logic: must be a manager
+        return s.managers?.includes(currentUser?.id || '');
+    };
+
+    const isCurrent = (id: string) => {
+        // We need access to global state or URL param, but for "In Place" switching,
+        // we might trigger an App-level update.
+        // For visual, we can read from props if passed, but here we trigger the switch.
+        return false; 
     };
 
     return (
@@ -113,13 +141,22 @@ export const StoreManagement: React.FC = () => {
              <div className="space-y-4">
                  {/* Parent Stores First */}
                  {stores.filter(s => stores.some(c => c.parent_id === s.id)).map(parent => (
-                     <div key={parent.id} className="bg-white dark:bg-gray-800 rounded-2xl border-2 border-purple-100 dark:border-purple-900 p-4 relative overflow-hidden">
+                     <div key={parent.id} className="bg-white dark:bg-gray-800 rounded-2xl border-2 border-purple-100 dark:border-purple-900 p-4 relative overflow-hidden group">
                          <div className="absolute top-0 right-0 bg-purple-600 text-white text-xs font-bold px-2 py-1 rounded-bl-xl">母门店</div>
                          <div className="flex justify-between items-center mb-2">
-                             <h3 className="text-xl font-bold">{parent.name}</h3>
+                             <div className="cursor-pointer flex-1" onClick={() => switchStore(parent.id)}>
+                                <h3 className="text-xl font-bold flex items-center gap-2">
+                                    {parent.name}
+                                    <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 rounded-full">点击切换</span>
+                                </h3>
+                             </div>
                              <div className="flex gap-2">
-                                 <button onClick={()=>handleEdit(parent)} className="p-2 bg-gray-100 rounded-lg"><Icons.Box size={16}/></button>
-                                 <button onClick={()=>handleDelete(parent.id)} className="p-2 bg-red-100 text-red-600 rounded-lg"><Icons.Minus size={16}/></button>
+                                 {canEdit(parent) && (
+                                     <>
+                                        <button onClick={()=>handleEdit(parent)} className="p-2 bg-gray-100 rounded-lg"><Icons.Box size={16}/></button>
+                                        <button onClick={()=>handleDelete(parent.id)} className="p-2 bg-red-100 text-red-600 rounded-lg"><Icons.Minus size={16}/></button>
+                                     </>
+                                 )}
                              </div>
                          </div>
                          <div className="flex gap-2 mt-2 overflow-x-auto">
@@ -134,26 +171,31 @@ export const StoreManagement: React.FC = () => {
 
                  {/* Independent/Child Stores */}
                  {stores.filter(s => !stores.some(c => c.parent_id === s.id)).map(store => (
-                     <div key={store.id} className="bg-white dark:bg-gray-800 rounded-2xl border dark:border-gray-700 p-4 flex justify-between items-center hover:shadow-md transition-shadow">
-                         <div>
+                     <div key={store.id} className="bg-white dark:bg-gray-800 rounded-2xl border dark:border-gray-700 p-4 flex justify-between items-center hover:shadow-md transition-shadow group">
+                         <div className="cursor-pointer flex-1" onClick={() => switchStore(store.id)}>
                              <div className="flex items-center gap-2">
                                  <h3 className="font-bold text-lg">{store.name}</h3>
                                  {store.parent_id && <span className="text-xs bg-gray-200 px-1 rounded">子门店</span>}
+                                 <span className="text-xs font-normal text-gray-400 bg-gray-100 px-2 rounded-full opacity-0 group-hover:opacity-100 transition-opacity">点击切换</span>
                              </div>
                              <p className="text-xs text-gray-500">{store.location || '无位置'}</p>
                          </div>
                          <div className="flex gap-2">
-                             <button onClick={()=>handleEdit(store)} className="p-2 hover:bg-gray-100 rounded-lg"><Icons.Box size={18}/></button>
-                             <button onClick={()=>handleDelete(store.id)} className="p-2 hover:bg-red-50 text-red-500 rounded-lg"><Icons.Minus size={18}/></button>
+                             {canEdit(store) && (
+                                 <>
+                                    <button onClick={()=>handleEdit(store)} className="p-2 hover:bg-gray-100 rounded-lg"><Icons.Box size={18}/></button>
+                                    <button onClick={()=>handleDelete(store.id)} className="p-2 hover:bg-red-50 text-red-500 rounded-lg"><Icons.Minus size={18}/></button>
+                                 </>
+                             )}
                          </div>
                      </div>
                  ))}
              </div>
 
-             {/* Modal */}
-             {isModalOpen && (
-                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                     <div className="bg-white dark:bg-gray-900 w-full max-w-2xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto">
+             {/* Portal Modal */}
+             {isModalOpen && createPortal(
+                 <div className="fixed inset-0 bg-black/60 backdrop-blur-sm z-[200] flex items-center justify-center p-4">
+                     <div className="bg-white dark:bg-gray-900 w-full max-w-2xl rounded-3xl p-8 max-h-[90vh] overflow-y-auto animate-scale-in">
                          <h2 className="text-2xl font-black mb-6">{editingStore ? '编辑' : '新建'}门店</h2>
                          <div className="space-y-4">
                              <input value={name} onChange={e=>setName(e.target.value)} placeholder="门店名称" className="w-full p-3 border rounded-xl font-bold bg-gray-50 dark:bg-gray-800"/>
@@ -235,7 +277,8 @@ export const StoreManagement: React.FC = () => {
                              <button onClick={handleSubmit} className="px-6 py-2 rounded-xl bg-black text-white font-bold">保存</button>
                          </div>
                      </div>
-                 </div>
+                 </div>,
+                 document.body
              )}
         </div>
     );

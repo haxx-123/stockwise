@@ -1,131 +1,205 @@
 
 import React, { useRef, useEffect, useState } from 'react';
+import { Icons } from './Icons';
 
 declare const faceapi: any;
 
 interface FaceAuthProps {
     onSuccess: () => void;
     onCancel: () => void;
-    mode?: 'LOGIN' | 'REGISTER';
-    existingDescriptor?: string; // For login match
-    onCapture?: (descriptor: string) => void; // For register
+    mode: 'LOGIN' | 'REGISTER';
+    existingDescriptor?: string; // JSON string of float array
+    onCapture?: (descriptor: string) => void;
 }
 
-export const FaceAuth: React.FC<FaceAuthProps> = ({ onSuccess, onCancel, mode = 'LOGIN', existingDescriptor, onCapture }) => {
+export const FaceAuth: React.FC<FaceAuthProps> = ({ onSuccess, onCancel, mode, existingDescriptor, onCapture }) => {
     const videoRef = useRef<HTMLVideoElement>(null);
     const canvasRef = useRef<HTMLCanvasElement>(null);
-    const [status, setStatus] = useState('初始化视觉引擎...');
-    const [isModelLoaded, setIsModelLoaded] = useState(false);
+    const [status, setStatus] = useState('正在启动视觉引擎...');
     const [stream, setStream] = useState<MediaStream | null>(null);
+    const [isProcessing, setIsProcessing] = useState(false);
 
-    useEffect(() => {
-        const loadModels = async () => {
-            try {
-                // Load simplified models from CDN
-                await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
-                await faceapi.nets.faceLandmark68Net.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
-                await faceapi.nets.faceRecognitionNet.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
-                setIsModelLoaded(true);
-                startCamera();
-            } catch (e) {
-                setStatus("模型加载失败，请检查网络");
-            }
-        };
-        loadModels();
-        return () => stopCamera();
-    }, []);
-
-    const startCamera = async () => {
-        try {
-            const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
-            setStream(s);
-            if (videoRef.current) {
-                videoRef.current.srcObject = s;
-            }
-            setStatus("请正对摄像头，保持光线充足...");
-        } catch (e) {
-            setStatus("无法访问摄像头");
+    // Cleanup function to stop camera
+    const stopCamera = () => {
+        if (stream) {
+            stream.getTracks().forEach(track => track.stop());
+            setStream(null);
         }
     };
 
-    const stopCamera = () => {
-        if (stream) stream.getTracks().forEach(t => t.stop());
-    };
+    useEffect(() => {
+        let isMounted = true;
 
-    const handleVideoPlay = () => {
-        const interval = setInterval(async () => {
-            if (!videoRef.current || !canvasRef.current || videoRef.current.paused || videoRef.current.ended) return;
+        const startProcess = async () => {
+            try {
+                // 1. Load Models
+                setStatus("正在加载 AI 模型...");
+                const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/';
+                await Promise.all([
+                    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+                    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+                ]);
 
-            const displaySize = { width: videoRef.current.videoWidth, height: videoRef.current.videoHeight };
-            faceapi.matchDimensions(canvasRef.current, displaySize);
+                if (!isMounted) return;
 
-            const detections = await faceapi.detectAllFaces(videoRef.current, new faceapi.TinyFaceDetectorOptions()).withFaceLandmarks().withFaceDescriptors();
-            
-            // Clear canvas
-            const ctx = canvasRef.current.getContext('2d');
-            ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-
-            if (detections.length > 0) {
-                const det = detections[0];
-                const box = det.detection.box;
+                // 2. Start Camera
+                setStatus("正在请求摄像头权限...");
+                const s = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } });
+                setStream(s);
                 
-                // Draw Green Box
-                if (ctx) {
-                    ctx.strokeStyle = '#00ff00';
-                    ctx.lineWidth = 4;
-                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+                if (videoRef.current) {
+                    videoRef.current.srcObject = s;
                 }
+                
+                setStatus("请正对摄像头，保持光线充足");
+                setIsProcessing(true);
 
-                if (mode === 'REGISTER') {
-                    if (det.descriptor) {
-                        clearInterval(interval);
-                        setStatus("采集成功！");
-                        // Serialize float32array to string
-                        const descStr = JSON.stringify(Array.from(det.descriptor));
-                        if(onCapture) onCapture(descStr);
-                        setTimeout(onSuccess, 1000);
-                    }
-                } else if (mode === 'LOGIN' && existingDescriptor) {
-                    const stored = new Float32Array(JSON.parse(existingDescriptor));
-                    const dist = faceapi.euclideanDistance(det.descriptor, stored);
-                    if (dist < 0.6) { // Threshold
-                        clearInterval(interval);
-                        setStatus("识别通过！");
-                        setTimeout(onSuccess, 1000);
-                    } else {
-                        setStatus("人脸不匹配");
-                    }
-                }
-            } else {
-                setStatus("未检测到人脸...");
+            } catch (e: any) {
+                console.error(e);
+                setStatus(`设备不支持或权限被拒绝`);
             }
-        }, 500);
+        };
+
+        startProcess();
+
+        return () => {
+            isMounted = false;
+            stopCamera();
+        };
+    }, []);
+
+    // Detection Loop
+    useEffect(() => {
+        if (!isProcessing || !videoRef.current || !canvasRef.current) return;
+
+        const interval = setInterval(async () => {
+            if (videoRef.current && !videoRef.current.paused && !videoRef.current.ended) {
+                // Prepare Canvas
+                const displaySize = { 
+                    width: videoRef.current.videoWidth, 
+                    height: videoRef.current.videoHeight 
+                };
+                
+                // Avoid 0x0 errors
+                if (displaySize.width === 0 || displaySize.height === 0) return;
+
+                faceapi.matchDimensions(canvasRef.current, displaySize);
+
+                // Detect Face (Single)
+                const detection = await faceapi.detectSingleFace(
+                    videoRef.current, 
+                    new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 })
+                ).withFaceLandmarks().withFaceDescriptor();
+
+                const ctx = canvasRef.current.getContext('2d');
+                if (!ctx) return;
+                ctx.clearRect(0, 0, displaySize.width, displaySize.height);
+
+                if (detection) {
+                    const { box } = detection.detection;
+                    const score = detection.detection.score;
+
+                    // Validate Quality (Score > 0.8)
+                    const isHighQuality = score > 0.8;
+
+                    // Draw Box
+                    ctx.lineWidth = 4;
+                    ctx.strokeStyle = isHighQuality ? '#00ff00' : '#00aaff'; // Green if good, Blue if detecting
+                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+
+                    // Draw Score
+                    ctx.fillStyle = isHighQuality ? '#00ff00' : '#00aaff';
+                    ctx.font = '16px Arial';
+                    ctx.fillText(`${Math.round(score * 100)}%`, box.x, box.y - 10);
+
+                    if (isHighQuality) {
+                        // Logic Branch
+                        if (mode === 'REGISTER') {
+                            setStatus("采集成功！正在处理...");
+                            clearInterval(interval);
+                            const descStr = JSON.stringify(Array.from(detection.descriptor));
+                            if (onCapture) onCapture(descStr);
+                            setTimeout(() => {
+                                stopCamera();
+                                onSuccess();
+                            }, 500);
+                        } 
+                        else if (mode === 'LOGIN' && existingDescriptor) {
+                            try {
+                                const stored = new Float32Array(JSON.parse(existingDescriptor));
+                                const dist = faceapi.euclideanDistance(detection.descriptor, stored);
+                                
+                                // Distance Threshold (Lower is stricter, usually 0.6 is good)
+                                if (dist < 0.6) {
+                                    setStatus("身份验证通过！");
+                                    ctx.strokeStyle = '#00ff00';
+                                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+                                    clearInterval(interval);
+                                    setTimeout(() => {
+                                        stopCamera();
+                                        onSuccess();
+                                    }, 500);
+                                } else {
+                                    setStatus("人脸不匹配，请重试");
+                                    ctx.strokeStyle = '#ff0000'; // Red for mismatch
+                                    ctx.strokeRect(box.x, box.y, box.width, box.height);
+                                }
+                            } catch (e) {
+                                setStatus("人脸数据解析错误");
+                            }
+                        }
+                    } else {
+                        setStatus("请靠近一点，保持不动...");
+                    }
+                } else {
+                    setStatus("未检测到人脸...");
+                }
+            }
+        }, 200); // 5 FPS check
+
         return () => clearInterval(interval);
-    };
+    }, [isProcessing, mode, existingDescriptor]);
 
     return (
-        <div className="fixed inset-0 bg-black/90 z-[100] flex flex-col items-center justify-center p-4">
-            <div className="relative w-full max-w-md aspect-square bg-gray-900 rounded-3xl overflow-hidden border-2 border-white/20 shadow-2xl">
+        <div className="fixed inset-0 bg-black/95 z-[9999] flex flex-col items-center justify-center p-4 animate-fade-in">
+            <div className="relative w-full max-w-sm aspect-[3/4] bg-gray-900 rounded-3xl overflow-hidden border-2 border-white/20 shadow-2xl">
                 <video 
                     ref={videoRef} 
                     autoPlay 
                     muted 
-                    onPlay={handleVideoPlay}
-                    className="w-full h-full object-cover"
+                    playsInline
+                    className="w-full h-full object-cover transform scale-x-[-1]" // Mirror effect
                 />
-                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none" />
+                <canvas ref={canvasRef} className="absolute inset-0 w-full h-full pointer-events-none transform scale-x-[-1]" />
                 
-                {/* Overlay UI */}
-                <div className="absolute inset-0 border-[20px] border-black/50 rounded-3xl pointer-events-none"></div>
-                <div className="absolute bottom-4 left-0 right-0 text-center">
-                    <span className="bg-black/60 text-white px-4 py-2 rounded-full font-bold text-sm backdrop-blur-md">
+                {/* Visual Overlay - Scanning Grid */}
+                <div className="absolute inset-0 pointer-events-none opacity-20" 
+                     style={{
+                         backgroundImage: 'linear-gradient(rgba(0,255,0,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(0,255,0,0.1) 1px, transparent 1px)',
+                         backgroundSize: '40px 40px'
+                     }}>
+                </div>
+                
+                {/* Status Bar */}
+                <div className="absolute bottom-6 left-0 right-0 text-center z-10">
+                    <span className="inline-block bg-black/60 backdrop-blur-md text-white px-6 py-3 rounded-full font-bold text-sm border border-white/10 shadow-lg">
                         {status}
                     </span>
                 </div>
+                
+                {/* Close Button */}
+                <button 
+                    onClick={() => { stopCamera(); onCancel(); }}
+                    className="absolute top-4 right-4 p-3 bg-black/40 text-white rounded-full hover:bg-white/20 transition-colors"
+                >
+                    <Icons.Minus size={24}/>
+                </button>
             </div>
-            <button onClick={()=>{stopCamera(); onCancel();}} className="mt-8 px-8 py-3 bg-white/10 text-white rounded-xl border border-white/20 font-bold hover:bg-white/20">
-                取消
-            </button>
+            
+            <p className="text-gray-500 mt-6 text-sm">
+                Powered by FaceAPI • TinyFaceDetector
+            </p>
         </div>
     );
 };

@@ -1,8 +1,9 @@
+
 {
   "name": "棱镜-StockWise",
   "short_name": "棱镜",
   "description": "StockWise - 智能库管系统",
-  "start_url": "/",
+  "start_url": ".",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#000000",
