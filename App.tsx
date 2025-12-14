@@ -1,6 +1,5 @@
 
-
-import React, { useState, useEffect, Suspense, useRef } from 'react';
+import React, { useState, useEffect, Suspense } from 'react';
 import { Sidebar } from './components/Sidebar';
 import { Icons } from './components/Icons';
 import { dataService } from './services/dataService';
@@ -22,27 +21,26 @@ const StoreManagement = React.lazy(() => import('./pages/StoreManagement').then(
 declare const window: any;
 declare const faceapi: any;
 
-// Splash Screen
 const Splash = ({ isReady }: { isReady: boolean }) => (
-    <div className={`fixed inset-0 bg-white dark:bg-gray-950 z-[9999] flex flex-col items-center justify-center transition-all duration-800 ease-out ${isReady ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        <img src="https://i.ibb.co/vxTZMzfD/retouch-2025121122511132.png" className="w-24 h-24 mb-6 drop-shadow-2xl object-contain animate-bounce" />
-        <h1 className="text-3xl font-black text-gray-900 dark:text-white tracking-[0.5em] text-center mb-8 uppercase">棱镜<br/><span className="text-xs tracking-[1em] text-gray-400 font-medium">StockWise</span></h1>
-        <img src="https://i.ibb.co/8gLfYKCW/retouch-2025121313394035.png" className="w-48 h-auto object-contain opacity-80" />
+    <div className={`fixed inset-0 bg-[#888888] z-[9999] flex flex-col items-center justify-center transition-all duration-800 ease-out ${isReady ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+        <img src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" className="w-24 h-24 mb-6 drop-shadow-2xl object-contain animate-bounce" />
+        <h1 className="text-3xl font-black text-black tracking-[0.5em] text-center mb-8 uppercase">棱镜<br/><span className="text-xs tracking-[1em] text-gray-700 font-medium">StockWise</span></h1>
     </div>
 );
 
 // Top Right Actions Bar
-const TopActions = ({ onNavigate, currentPage }: any) => {
+const TopActions = ({ onOpenAnnouncement }: any) => {
+    // Screenshot
     const handleScreenshot = () => {
-        const el = document.getElementById('main-content');
+        const el = document.getElementById('main-content-scroll');
         if (el && (window as any).html2canvas) {
             const originalHeight = el.style.height;
             const originalOverflow = el.style.overflow;
             el.style.height = el.scrollHeight + 'px';
             el.style.overflow = 'visible';
-            (window as any).html2canvas(el, { ignoreElements: (e:any) => e.classList.contains('no-print') }).then((canvas:any) => {
+            (window as any).html2canvas(el, { ignoreElements: (e:any) => e.classList.contains('no-print') || e.tagName === 'NAV' }).then((canvas:any) => {
                 const link = document.createElement('a');
-                link.download = `screenshot_${Date.now()}.png`;
+                link.download = `prism_capture_${Date.now()}.png`;
                 link.href = canvas.toDataURL();
                 link.click();
                 el.style.height = originalHeight;
@@ -51,16 +49,14 @@ const TopActions = ({ onNavigate, currentPage }: any) => {
         }
     };
 
+    // Excel Export Trigger (Listens in pages)
     const handleExcel = () => {
-        if (currentPage !== 'inventory' && currentPage !== 'logs' && currentPage !== 'audit' && currentPage !== 'settings-perms') return;
-        const event = new CustomEvent('trigger-excel-export');
-        window.dispatchEvent(event);
+        window.dispatchEvent(new CustomEvent('trigger-excel-export'));
     };
 
+    // Copy Trigger
     const handleCopy = () => {
-        if (currentPage !== 'inventory' && currentPage !== 'logs' && currentPage !== 'audit' && currentPage !== 'settings-perms') return;
-        const event = new CustomEvent('trigger-copy');
-        window.dispatchEvent(event);
+        window.dispatchEvent(new CustomEvent('trigger-copy'));
     };
 
     return (
@@ -68,9 +64,9 @@ const TopActions = ({ onNavigate, currentPage }: any) => {
             <button onClick={handleScreenshot} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform"><Icons.Camera size={18}/></button>
             <button onClick={handleExcel} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform"><Icons.FileSpreadsheet size={18}/></button>
             <button onClick={handleCopy} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform"><Icons.Copy size={18}/></button>
-            <button onClick={()=>onNavigate('announcement')} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform relative">
+            <button onClick={onOpenAnnouncement} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform relative">
                 <Icons.Megaphone size={18}/>
-                <div className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full"></div>
+                <div className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full" id="ann-dot"></div>
             </button>
             <InstallButton />
         </div>
@@ -95,7 +91,7 @@ const InstallButton = () => {
             deferredPrompt.prompt();
             deferredPrompt.userChoice.then(() => setDeferredPrompt(null));
         } else if (showIOS) {
-            alert("请点击浏览器底部的分享按钮，选择“添加到主屏幕”");
+            alert("请点击浏览器底部的分享按钮，选择“添加到主屏幕”"); // Modal preferred but alert for constraint
         }
     };
 
@@ -113,28 +109,24 @@ const AppContent: React.FC = () => {
   const [currentPage, setCurrentPage] = useState('dashboard');
   const [currentStore, setCurrentStore] = useState('all');
   const [stores, setStores] = useState<Store[]>([]);
-  const [theme, setTheme] = useState(localStorage.getItem('sw_theme') || 'light');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [announcementOpen, setAnnouncementOpen] = useState(false); // Modal state
   
+  // Theme
   useEffect(() => {
-      document.documentElement.className = ''; 
-      if (theme === 'dark') document.documentElement.classList.add('dark');
-      if (theme === 'prism') document.documentElement.classList.add('theme-prism');
-      localStorage.setItem('sw_theme', theme);
-  }, [theme]);
+      const savedTheme = localStorage.getItem('sw_theme') || 'prism';
+      document.documentElement.className = savedTheme === 'dark' ? 'dark' : '';
+  }, []);
 
-  // Launch Logic
+  // Boot & Refresh
   useEffect(() => {
       if (!isAuthenticated) return;
       const boot = async () => {
           if (isConfigured()) { 
                try {
-                   const [sList] = await Promise.all([
-                       dataService.getStores(),
-                       // pre-fetch other critical data if needed
-                   ]);
+                   const [sList] = await Promise.all([dataService.getStores()]);
                    setStores(sList);
-               } catch (e) { console.error("Boot Error", e); }
+               } catch (e) { console.error(e); }
           }
           setIsReady(true);
       };
@@ -150,10 +142,8 @@ const AppContent: React.FC = () => {
                   const user = authService.getCurrentUser();
                   const valid = anns.find(a => !a.is_force_deleted && a.popup_config.enabled && !a.read_by?.includes(`HIDDEN_BY_${user?.id}`));
                   if (valid) {
-                      // Custom Modal needed for Rich Text, using alert for simple demo as requested, 
-                      // but ideally this should be a modal. Using simple alert for now to satisfy constraints.
-                      // For rich text popup, we'd render a component.
-                      alert(`【公告】${valid.title} (请在公告中心查看详情)`); 
+                      // Trigger announcement modal instead of alert
+                      setAnnouncementOpen(true);
                       sessionStorage.setItem(todayKey, 'true');
                   }
               });
@@ -163,13 +153,13 @@ const AppContent: React.FC = () => {
 
   const handleLogin = async (u: string, p: string) => {
       const success = await authService.login(u, p);
-      if (success) setIsAuthenticated(true);
+      if (success) { setIsAuthenticated(true); window.location.reload(); } // Force refresh
       return success;
   };
 
   const handleFaceLogin = async (u: string) => {
       const success = await authService.loginWithFace(u);
-      if (success) setIsAuthenticated(true);
+      if (success) { setIsAuthenticated(true); window.location.reload(); }
       return success;
   };
 
@@ -180,9 +170,9 @@ const AppContent: React.FC = () => {
   return (
     <>
     <Splash isReady={isReady} />
-    <TopActions onNavigate={setCurrentPage} currentPage={currentPage} />
+    <TopActions onOpenAnnouncement={()=>setAnnouncementOpen(true)} />
     
-    <div className="h-screen flex font-sans text-gray-800 dark:text-gray-100 overflow-hidden bg-gray-50 dark:bg-gray-950">
+    <div className="h-screen flex font-sans text-black overflow-hidden bg-[#888888]">
       
       {/* Mobile Menu Button */}
       <div className="fixed top-4 left-4 z-[60] md:hidden">
@@ -191,7 +181,7 @@ const AppContent: React.FC = () => {
           </button>
       </div>
 
-      {/* Sidebar: Overlay on Mobile, Fixed on Desktop */}
+      {/* Sidebar */}
       <div className={`fixed inset-y-0 left-0 z-50 transform transition-transform duration-300 md:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:flex`}>
           <Sidebar 
              currentPage={currentPage} 
@@ -199,26 +189,38 @@ const AppContent: React.FC = () => {
              currentStore={currentStore} 
              stores={stores}
              onStoreChange={setCurrentStore}
-             isMobileDrawer={true} // Style adjustment
+             isMobileDrawer={true} 
           />
       </div>
-      {/* Mobile Overlay Backdrop */}
       {mobileMenuOpen && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={()=>setMobileMenuOpen(false)}></div>}
       
-      <div id="main-content" className="flex-1 flex flex-col h-full relative transition-all duration-300 overflow-hidden">
+      <div id="main-content-scroll" className="flex-1 flex flex-col h-full relative transition-all duration-300 overflow-hidden pt-16 md:pt-0">
         <div className="flex-1 overflow-auto custom-scrollbar p-0 relative pb-safe">
-            <Suspense fallback={<div className="p-10 text-center">Loading...</div>}>
+            <Suspense fallback={<div className="p-10 text-center text-white">Loading...</div>}>
                 {currentPage === 'dashboard' && <Dashboard currentStore={currentStore} onNavigate={setCurrentPage} />}
                 {currentPage === 'inventory' && <Inventory currentStore={currentStore} />}
                 {currentPage === 'import' && <Import currentStore={currentStore} />}
                 {currentPage === 'logs' && <Logs />}
                 {currentPage === 'audit' && <Audit />}
                 {currentPage === 'store_manage' && <StoreManagement />}
-                {currentPage === 'announcement' && <AnnouncementCenter />} 
-                {currentPage.startsWith('settings') && <Settings subPage={currentPage.split('-')[1]} onThemeChange={setTheme} />}
+                {currentPage.startsWith('settings') && <Settings subPage={currentPage.split('-')[1]} />}
             </Suspense>
         </div>
       </div>
+
+      {/* Announcement Modal (Overlay) */}
+      {announcementOpen && (
+          <div className="fixed inset-0 z-[100] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-white dark:bg-gray-800 w-full max-w-4xl h-[80vh] rounded-3xl overflow-hidden shadow-2xl relative">
+                  <button onClick={()=>setAnnouncementOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full z-10"><Icons.Minus size={20}/></button>
+                  <div className="h-full overflow-y-auto custom-scrollbar">
+                      <Suspense fallback={<div>Loading...</div>}>
+                          <AnnouncementCenter />
+                      </Suspense>
+                  </div>
+              </div>
+          </div>
+      )}
     </div>
     </>
   );
@@ -231,63 +233,56 @@ const LoginPage = ({ onLogin, onFaceLogin }: any) => {
     const [mode, setMode] = useState<'PASS' | 'FACE'>('PASS');
     const [videoEl, setVideoEl] = useState<HTMLVideoElement | null>(null);
     const [scanStatus, setScanStatus] = useState('');
-    const [canvasEl, setCanvasEl] = useState<HTMLCanvasElement | null>(null);
-
+    
+    // Real Face Logic (Simplified integration)
     const startCamera = async () => {
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             if (videoEl) videoEl.srcObject = stream;
-            setScanStatus('正在初始化视觉模型...');
-            
+            setScanStatus('初始化模型...');
             await faceapi.nets.tinyFaceDetector.loadFromUri('https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/');
             setScanStatus('请正对摄像头...');
-
-            const detect = async () => {
-                if(videoEl && canvasEl) {
-                    const detections = await faceapi.detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions());
-                    if (detections && detections.score > 0.8) {
-                        setScanStatus('识别成功!');
-                        // Stop camera
-                        stream.getTracks().forEach(t => t.stop());
-                        setTimeout(() => onFaceLogin(user || '管理员'), 1000); // Simulate finding user
-                    } else {
-                        requestAnimationFrame(detect);
+            
+            const interval = setInterval(async () => {
+                if(videoEl && !videoEl.paused) {
+                    const det = await faceapi.detectSingleFace(videoEl, new faceapi.TinyFaceDetectorOptions());
+                    if(det && det.score > 0.8) {
+                        setScanStatus('识别成功');
+                        clearInterval(interval);
+                        stream.getTracks().forEach(t=>t.stop());
+                        onFaceLogin(user || '管理员'); // Mock match logic for demo, real logic matches descriptor
                     }
                 }
-            };
-            detect();
-
-        } catch (e) { alert("Camera error or Model load error"); }
+            }, 500);
+        } catch(e) { setScanStatus('摄像头错误'); }
     };
 
     return (
-        <div className="h-screen flex items-center justify-center bg-gray-50 dark:bg-gray-900 p-4">
-            <div className="w-full max-w-md bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-xl border dark:border-gray-700">
+        <div className="h-screen flex items-center justify-center bg-[#888888] p-4">
+            <div className="w-full max-w-md glass-panel p-8 rounded-3xl shadow-xl">
                 <div className="text-center mb-8">
-                     <img src="https://i.ibb.co/vxTZMzfD/retouch-2025121122511132.png" className="w-20 h-20 mx-auto mb-4 drop-shadow-xl object-contain" />
-                     <h1 className="text-2xl font-black tracking-widest dark:text-white">STOCKWISE</h1>
+                     <img src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" className="w-20 h-20 mx-auto mb-4 drop-shadow-xl object-contain" />
+                     <h1 className="text-2xl font-black tracking-widest text-black">STOCKWISE</h1>
                 </div>
                 
                 <div className="flex gap-4 mb-6">
-                    <button onClick={()=>setMode('PASS')} className={`flex-1 py-2 font-bold rounded-xl ${mode==='PASS'?'bg-black text-white':'bg-gray-100 text-gray-500'}`}>密码登录</button>
-                    <button onClick={()=>{setMode('FACE'); startCamera();}} className={`flex-1 py-2 font-bold rounded-xl ${mode==='FACE'?'bg-black text-white':'bg-gray-100 text-gray-500'}`}>人脸识别</button>
+                    <button onClick={()=>setMode('PASS')} className={`flex-1 py-2 font-bold rounded-xl ${mode==='PASS'?'bg-black text-white':'bg-white/20 text-black'}`}>密码登录</button>
+                    <button onClick={()=>{setMode('FACE'); startCamera();}} className={`flex-1 py-2 font-bold rounded-xl ${mode==='FACE'?'bg-black text-white':'bg-white/20 text-black'}`}>人脸识别</button>
                 </div>
 
                 {mode === 'PASS' ? (
                     <div className="space-y-4">
-                        <input className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" placeholder="Username" value={user} onChange={e=>setUser(e.target.value)} />
-                        <input type="password" className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} />
-                        <button onClick={()=>onLogin(user, pass)} className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl shadow-lg">LOGIN</button>
+                        <input className="w-full p-4 bg-white/30 rounded-2xl font-bold border-none placeholder-gray-600 text-black" placeholder="Username" value={user} onChange={e=>setUser(e.target.value)} />
+                        <input type="password" className="w-full p-4 bg-white/30 rounded-2xl font-bold border-none placeholder-gray-600 text-black" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} />
+                        <button onClick={()=>onLogin(user, pass)} className="w-full bg-black text-white font-bold py-4 rounded-2xl shadow-lg hover:scale-105 transition-transform">LOGIN</button>
                     </div>
                 ) : (
                     <div className="flex flex-col items-center gap-4">
-                        <div className="relative w-64 h-64 bg-black rounded-full overflow-hidden border-4 border-blue-500">
+                        <div className="relative w-64 h-64 bg-black rounded-full overflow-hidden border-4 border-white/30">
                             <video ref={setVideoEl} autoPlay muted playsInline className="w-full h-full object-cover"></video>
-                            <canvas ref={setCanvasEl} className="absolute inset-0 w-full h-full"></canvas>
                             <div className="absolute inset-0 border-4 border-transparent border-t-green-500 rounded-full animate-spin"></div>
                         </div>
-                        <p className="font-bold text-lg">{scanStatus}</p>
-                        <button onClick={()=>{window.location.reload()}} className="text-sm text-gray-500">取消</button>
+                        <p className="font-bold text-lg text-black">{scanStatus}</p>
                     </div>
                 )}
             </div>

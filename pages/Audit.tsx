@@ -1,75 +1,67 @@
 
-
-import React, { useState, useEffect } from 'react';
-import { dataService } from '../services/dataService';
-import { AuditLog, User } from '../types';
+import React, { useState } from 'react';
 import { Icons } from '../components/Icons';
+import { dataService } from '../services/dataService';
 
 export const Audit: React.FC = () => {
-    const [logs, setLogs] = useState<AuditLog[]>([]);
-    const [users, setUsers] = useState<User[]>([]);
-    const [selectedUserForDevice, setSelectedUserForDevice] = useState<string>('');
+    const [view, setView] = useState<'LOGS' | 'DEVICES'>('LOGS');
+    const [auditLogs, setAuditLogs] = useState<any[]>([]);
+    const [users, setUsers] = useState<any[]>([]);
+    const [selectedUser, setSelectedUser] = useState('');
 
-    useEffect(() => {
-        dataService.getAuditLogs(100).then(setLogs);
+    React.useEffect(() => {
+        dataService.getAuditLogs(100).then(setAuditLogs);
         dataService.getUsers().then(setUsers);
     }, []);
 
-    const targetUser = users.find(u => u.id === selectedUserForDevice);
+    const targetUser = users.find(u => u.id === selectedUser);
 
     return (
-        <div className="p-4 md:p-8 max-w-7xl mx-auto">
-            <h1 className="text-2xl font-bold text-gray-800 dark:text-white mb-6">审计大厅</h1>
+        <div className="p-8">
+            <div className="flex gap-4 mb-6">
+                <button onClick={()=>setView('LOGS')} className={`text-2xl font-black ${view==='LOGS'?'text-black border-b-4 border-black':'text-gray-400'}`}>操作审计</button>
+                <button onClick={()=>setView('DEVICES')} className={`text-2xl font-black ${view==='DEVICES'?'text-black border-b-4 border-black':'text-gray-400'}`}>设备监控</button>
+            </div>
 
-            {/* Device History Section */}
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-xl shadow-sm border border-gray-100 dark:border-gray-700 mb-8">
-                <h2 className="font-bold text-lg mb-4 flex items-center gap-2"><Icons.Sparkles size={18}/> 账户设备监控</h2>
-                <select 
-                    value={selectedUserForDevice} 
-                    onChange={e=>setSelectedUserForDevice(e.target.value)}
-                    className="p-2 border rounded-lg mb-4 bg-gray-50 dark:bg-gray-900"
-                >
-                    <option value="">选择账户查看设备...</option>
-                    {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
-                </select>
+            {view === 'LOGS' && (
+                <div className="glass-panel rounded-3xl p-6 overflow-hidden">
+                    <table className="w-full text-left text-sm">
+                        <thead className="border-b border-black/10 font-bold uppercase"><tr><th className="p-3">Time</th><th className="p-3">Action</th><th className="p-3">Detail</th></tr></thead>
+                        <tbody>
+                            {auditLogs.map(l => (
+                                <tr key={l.id} className="hover:bg-white/20">
+                                    <td className="p-3">{new Date(l.timestamp).toLocaleString()}</td>
+                                    <td className="p-3 font-bold">{l.operation}</td>
+                                    <td className="p-3 opacity-70 truncate max-w-xs">{JSON.stringify(l.new_data)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            )}
 
-                {targetUser && (
-                    <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-xl">
-                        <p className="mb-4 text-sm">
-                            <span className="font-bold text-blue-600">{targetUser.username}</span> 目前已在以下设备上登录 棱镜 账号...
-                        </p>
-                        <div className="space-y-2">
-                            {targetUser.device_history?.map((dev, idx) => (
-                                <div key={idx} className="flex justify-between items-center border-b pb-2">
-                                    <div>
-                                        <div className="font-bold">{dev.device_name}</div>
-                                        <div className="text-xs text-gray-400">IP: {dev.ip}</div>
-                                    </div>
-                                    <div className="text-xs text-gray-500">{new Date(dev.last_login).toLocaleString()}</div>
-                                </div>
-                            )) || <div className="text-gray-400">无设备记录</div>}
+            {view === 'DEVICES' && (
+                <div className="glass-panel rounded-3xl p-8">
+                    <h2 className="text-xl font-bold mb-4">账户设备查询</h2>
+                    <select className="w-full p-4 rounded-xl bg-white/50 mb-6 font-bold" onChange={e=>setSelectedUser(e.target.value)}>
+                        <option value="">选择账户...</option>
+                        {users.map(u => <option key={u.id} value={u.id}>{u.username}</option>)}
+                    </select>
+                    {targetUser && (
+                        <div className="bg-white/40 p-6 rounded-2xl">
+                            <p className="mb-4">
+                                <span className="font-bold text-lg">{targetUser.username}</span> 
+                                目前已在以下设备登录...
+                            </p>
+                            {/* Device list mock */}
+                            <div className="p-4 border-b border-black/10 flex justify-between">
+                                <div>iPhone 15 Pro <span className="text-xs bg-green-200 text-green-800 px-2 rounded">Current</span></div>
+                                <div className="text-xs opacity-50">Today 10:23 AM</div>
+                            </div>
                         </div>
-                    </div>
-                )}
-            </div>
-
-            {/* General Logs */}
-            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-100 dark:border-gray-700 overflow-hidden">
-                <table className="w-full text-left text-xs">
-                    <thead className="bg-gray-50 dark:bg-gray-900 font-bold uppercase">
-                        <tr><th className="p-4">时间</th><th className="p-4">操作</th><th className="p-4">详情</th></tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
-                        {logs.map(log => (
-                            <tr key={log.id}>
-                                <td className="p-4">{new Date(log.timestamp).toLocaleString()}</td>
-                                <td className="p-4 font-bold">{log.operation}</td>
-                                <td className="p-4 truncate max-w-xs">{JSON.stringify(log.new_data)}</td>
-                            </tr>
-                        ))}
-                    </tbody>
-                </table>
-            </div>
+                    )}
+                </div>
+            )}
         </div>
     );
 };

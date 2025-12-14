@@ -15,8 +15,8 @@
           extend: {
             colors: {
               prism: { 
-                bg: '#e0e0e0', // Base grey for light mode to show glass effect
-                text: '#1a1a1a'
+                bg: '#e0e0e0',
+                text: '#000000' // Forced Black for Light Mode
               }
             },
             animation: {
@@ -34,17 +34,15 @@
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <!-- Updated QR/Face Libs -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
-    <!-- Image Compression -->
     <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
 
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #2d2d2d; /* Default Darker Base for contrast */
-        color: #ffffff;
+        background-color: #888888; /* Mid-grey base for glass effect */
+        color: #000000; /* Forced Black Text */
         overflow-x: hidden;
         -webkit-tap-highlight-color: transparent;
       }
@@ -56,14 +54,21 @@
         -webkit-backdrop-filter: blur(25px) !important;
         border: 1px solid rgba(255, 255, 255, 0.2) !important;
         box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+        color: #000000; /* Forced Black Text in panels */
       }
       
       /* Dark Mode Overrides */
-      html.dark body { background-color: #000000 !important; }
+      html.dark body { background-color: #000000 !important; color: #ffffff !important; }
       html.dark .glass-panel {
         background: rgba(0, 0, 0, 0.4) !important;
         border: 1px solid rgba(255, 255, 255, 0.1) !important;
         color: #ffffff !important;
+      }
+      /* Inputs */
+      input, select, textarea {
+          background: rgba(255,255,255,0.2) !important;
+          border: 1px solid rgba(0,0,0,0.1) !important;
+          color: #000000 !important;
       }
       html.dark input, html.dark select, html.dark textarea {
           background: rgba(0,0,0,0.5) !important;
@@ -71,19 +76,10 @@
           color: white !important;
       }
 
-      /* Light Mode Overrides (Default Prism) */
-      html:not(.dark) body { background-color: #888888 !important; /* Mid-grey to show glass */ }
-      html:not(.dark) .text-gray-500 { color: #e5e5e5 !important; }
-      html:not(.dark) input, html:not(.dark) select {
-          background: rgba(255,255,255,0.2);
-          border: 1px solid rgba(255,255,255,0.3);
-          color: white;
-      }
-      html:not(.dark) input::placeholder { color: rgba(255,255,255,0.6); }
-
       .custom-scrollbar::-webkit-scrollbar { width: 4px; }
       .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 99px; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(0,0,0,0.2); border-radius: 99px; }
+      html.dark .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); }
     </style>
   <script type="importmap">
 {
@@ -102,7 +98,6 @@
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
     <script>
       if ('serviceWorker' in navigator) {
         window.addEventListener('load', () => {

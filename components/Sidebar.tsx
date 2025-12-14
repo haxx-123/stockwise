@@ -41,30 +41,30 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
           onClick={() => onNavigate(item.id)}
           className={`relative flex items-center w-full space-x-3 px-4 py-3.5 rounded-2xl transition-all duration-300 group ${
             isActive
-              ? 'text-white font-bold bg-white/20 shadow-lg border border-white/10'
-              : 'text-gray-300 hover:bg-white/10 hover:text-white'
+              ? 'text-black font-bold bg-white/40 shadow-lg border border-white/20'
+              : 'text-gray-800 hover:bg-white/20 hover:text-black'
           }`}
         >
           <item.icon size={22} className={`transition-transform duration-300 ${isActive ? 'scale-110' : 'group-hover:scale-110'}`} />
           <span className="font-medium tracking-wide">{item.label}</span>
-          {isActive && <div className="absolute right-2 w-1.5 h-1.5 bg-white rounded-full shadow-[0_0_8px_rgba(255,255,255,0.8)]"></div>}
+          {isActive && <div className="absolute right-2 w-1.5 h-1.5 bg-black rounded-full shadow-[0_0_8px_rgba(0,0,0,0.5)]"></div>}
         </button>
     );
   };
 
   return (
-    <div className={`h-full glass-panel flex flex-col shrink-0 z-50 transition-all duration-300 ${isMobileDrawer ? 'fixed inset-y-0 left-0 w-72' : 'w-72 hidden md:flex'}`}>
+    <div className={`h-full glass-panel flex flex-col shrink-0 z-50 transition-all duration-300 ${isMobileDrawer ? 'fixed inset-y-0 left-0 w-72 shadow-2xl' : 'w-72 hidden md:flex'}`}>
       <div className="p-6 flex items-center space-x-4 border-b border-white/10">
         <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center shadow-inner border border-white/20 overflow-hidden shrink-0 backdrop-blur-md">
           <img src={LOGO_URL} alt="Logo" className="w-10 h-10 object-contain" />
         </div>
         <div>
-            <span className="text-xl font-black text-white tracking-tight block">棱镜</span>
-            <span className="text-[10px] text-gray-400 font-medium tracking-widest uppercase">StockWise</span>
+            <span className="text-xl font-black text-black tracking-tight block">棱镜</span>
+            <span className="text-[10px] text-gray-600 font-medium tracking-widest uppercase">StockWise</span>
         </div>
       </div>
 
-      {/* STORE BUTTON */}
+      {/* STORE BUTTON (Top of Sidebar) */}
       {!perms.hide_store_management && (
          <div className="px-4 mt-4">
              <button onClick={()=>onNavigate('store_manage')} className="w-full flex items-center justify-between p-3 bg-gradient-to-r from-blue-600/80 to-purple-600/80 text-white rounded-xl shadow-lg border border-white/10 hover:scale-[1.02] transition-transform">
@@ -77,11 +77,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
          </div>
       )}
 
-      {/* STORE SELECTOR (Only visual context here, switching happens in Store View mainly, but kept for context) */}
+      {/* STORE SELECTOR VISUAL */}
       <div className="px-4 mt-4">
-          <div className="bg-black/20 p-2 rounded-xl border border-white/5 flex items-center gap-2 relative">
-              <Icons.Store size={16} className="text-gray-400 ml-1"/>
-              <span className="text-sm font-bold text-white truncate">
+          <div className="bg-black/10 p-2 rounded-xl border border-white/5 flex items-center gap-2 relative">
+              <Icons.Store size={16} className="text-gray-600 ml-1"/>
+              <span className="text-sm font-bold text-black truncate">
                   {currentStore === 'all' ? '所有门店 (汇总)' : stores.find(s=>s.id===currentStore)?.name || '未知门店'}
               </span>
           </div>
@@ -93,16 +93,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
                 <NavButton item={item} />
              </div>
         ))}
-        
-        <div className="animate-slide-up" style={{animationDelay: '300ms'}}>
-            <NavButton item={{ id: 'announcement', label: '公告中心', icon: Icons.Megaphone }} />
-        </div>
 
         <div className="pt-6 mt-2 border-t border-white/10">
             <button
               onClick={() => setSettingsOpen(!settingsOpen)}
               className={`w-full flex items-center justify-between px-4 py-3 rounded-2xl transition-all duration-200 ${
-                currentPage.startsWith('settings') ? 'bg-white/10 text-white font-bold' : 'text-gray-400 hover:bg-white/5'
+                currentPage.startsWith('settings') ? 'bg-white/30 text-black font-bold' : 'text-gray-700 hover:bg-white/20'
               }`}
             >
                 <div className="flex items-center space-x-3">
@@ -113,18 +109,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
             </button>
             
             {settingsOpen && (
-                <div className="pl-4 space-y-1 mt-2 ml-4 border-l-2 border-white/10 animate-fade-in origin-top">
-                    {(user?.role_level === 0) && <button onClick={() => onNavigate('settings-config')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-config' ? 'text-white font-bold bg-white/10' : 'text-gray-400 hover:text-white'}`}>连接配置</button>}
+                <div className="pl-4 space-y-1 mt-2 ml-4 border-l-2 border-black/10 animate-fade-in origin-top">
+                    {(user?.role_level === 0) && <button onClick={() => onNavigate('settings-config')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-config' ? 'text-black font-bold bg-white/20' : 'text-gray-600 hover:text-black'}`}>连接配置</button>}
                     
-                    <button onClick={() => onNavigate('settings-account')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-account' ? 'text-white font-bold bg-white/10' : 'text-gray-400 hover:text-white'}`}>账户设置</button>
-                    {!perms.hide_perm_page && <button onClick={() => onNavigate('settings-perms')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-perms' ? 'text-white font-bold bg-white/10' : 'text-gray-400 hover:text-white'}`}>权限设置</button>}
-                    <button onClick={() => onNavigate('settings-theme')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-theme' ? 'text-white font-bold bg-white/10' : 'text-gray-400 hover:text-white'}`}>应用主题</button>
+                    <button onClick={() => onNavigate('settings-account')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-account' ? 'text-black font-bold bg-white/20' : 'text-gray-600 hover:text-black'}`}>账户设置</button>
+                    {!perms.hide_perm_page && <button onClick={() => onNavigate('settings-perms')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-perms' ? 'text-black font-bold bg-white/20' : 'text-gray-600 hover:text-black'}`}>权限设置</button>}
+                    <button onClick={() => onNavigate('settings-theme')} className={`block w-full text-left px-4 py-2.5 rounded-xl text-sm transition-colors ${currentPage === 'settings-theme' ? 'text-black font-bold bg-white/20' : 'text-gray-600 hover:text-black'}`}>应用主题</button>
                 </div>
             )}
         </div>
       </nav>
 
-      <div className="p-4 border-t border-white/10 bg-black/20 backdrop-blur-sm">
+      <div className="p-4 border-t border-white/10 bg-white/10 backdrop-blur-sm">
          {(user?.role_level === 0 || user?.role_level === 1) ? (
              <SVIPBadge name={user?.username || ''} roleLevel={user?.role_level} />
          ) : (
@@ -134,7 +130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
                 </div>
                 <div className="overflow-hidden">
                     <UsernameBadge name={user?.username || ''} roleLevel={user?.role_level || 9} />
-                    <p className="text-gray-500 text-xs truncate mt-0.5 font-medium">Level {String(user?.role_level).padStart(2,'0')}</p>
+                    <p className="text-gray-600 text-xs truncate mt-0.5 font-medium">Level {String(user?.role_level).padStart(2,'0')}</p>
                 </div>
             </div>
          )}

@@ -1,16 +1,14 @@
 
-
 export type Store = {
   id: string;
   name: string;
   location?: string;
   image_url?: string; 
-  parent_id?: string | null; // Link to Parent Store
+  parent_id?: string | null; 
   managers?: string[]; // User IDs
   viewers?: string[]; // User IDs
   is_archived?: boolean; 
-  // Virtual
-  children?: Store[]; 
+  children?: Store[]; // Virtual
 };
 
 export type Product = {
@@ -39,29 +37,26 @@ export type Batch = {
   created_at: string;
   is_archived?: boolean; 
   store_name?: string;
-  
   image_url?: string | null;
   remark?: string | null; 
 };
 
-export type TransactionType = 'IN' | 'OUT' | 'TRANSFER' | 'ADJUST' | 'IMPORT' | 'DELETE' | 'RESTORE';
+export type OperationType = 'IN' | 'OUT' | 'ADJUST' | 'DELETE' | 'IMPORT' | 'RESTORE';
 
-export type Transaction = {
-  id: string;
-  type: TransactionType;
-  product_id?: string;
-  store_id?: string;
-  batch_id?: string;
-  quantity: number; 
-  balance_after?: number; 
-  timestamp: string;
-  note?: string;
-  operator?: string; 
-  snapshot_data?: any; 
-  is_undone?: boolean; 
-  product?: { name: string };
-  store?: { name: string };
+// New Atomic Log Table
+export type OperationLog = {
+    id: string;
+    action_type: OperationType;
+    target_id: string; // Batch ID or Product ID
+    change_delta: number;
+    snapshot_data: any; // JSON Snapshot
+    operator_id: string; // Username
+    created_at: string;
+    is_revoked: boolean;
 };
+
+// Legacy Transaction (Keep for charts if needed, but Log is primary now)
+export type Transaction = OperationLog; 
 
 export type AuditLog = {
   id: number;
@@ -81,7 +76,6 @@ export interface UserPermissions {
     announcement_rule: 'PUBLISH' | 'VIEW';
     store_scope: 'GLOBAL' | 'LIMITED';
     
-    // UI Visibility Toggles
     show_excel: boolean;
     view_peers: boolean;
     view_self_in_list: boolean;
@@ -101,14 +95,10 @@ export type User = {
   username: string;
   password?: string; 
   role_level: RoleLevel; 
-  
   permissions: UserPermissions;
-  
   allowed_store_ids: string[]; 
   is_archived?: boolean; 
-  face_descriptor?: number[]; // Float32Array as array
-  
-  // Device History
+  face_descriptor?: string; 
   device_history?: {
       device_name: string;
       last_login: string;
@@ -128,9 +118,9 @@ export type Announcement = {
       enabled: boolean;
       duration: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'FOREVER';
   };
-  allow_delete: boolean; // "Can hide"
+  allow_delete: boolean;
   is_force_deleted?: boolean; 
-  read_by?: string[]; // "HIDDEN_BY_ID" or "READ_BY_ID"
+  read_by?: string[]; 
   created_at: string;
 };
 
