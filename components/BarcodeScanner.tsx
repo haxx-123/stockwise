@@ -25,6 +25,13 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({ onScan, onClose,
                 
                 if (!document.getElementById("reader")) return;
 
+                // Explicitly request permissions (helps in some WebViews)
+                try {
+                    await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+                } catch (e: any) {
+                    throw new Error("无法访问摄像头。请检查系统权限设置或确保使用 HTTPS/Localhost。");
+                }
+
                 // Configure formats: Support both 1D Barcodes and QR Codes
                 const formats = [
                     Html5QrcodeSupportedFormats.QR_CODE,
@@ -67,7 +74,7 @@ export const BarcodeScanner: React.FC<BarcodeScannerProps> = ({ onScan, onClose,
             } catch (err: any) {
                 console.error("Scanner Error:", err);
                 if (isMounted) {
-                    setErrorMsg("无法启动摄像头。请确保授予权限并使用 HTTPS 或 Localhost 访问。");
+                    setErrorMsg(err.message || "无法启动摄像头");
                 }
             }
         };

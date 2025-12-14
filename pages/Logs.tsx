@@ -7,6 +7,7 @@ import { matchProduct, getUniqueCategories } from '../utils/searchHelper';
 import { SmartSearch } from '../components/SmartSearch';
 import { Icons } from '../components/Icons';
 import { UsernameBadge } from '../components/UsernameBadge';
+import { createPortal } from 'react-dom';
 
 declare const window: any;
 
@@ -191,10 +192,10 @@ export const Logs: React.FC = () => {
             </h1>
             
             {/* Server Filters Bar */}
-            <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 mb-4 flex flex-wrap gap-4 items-center">
+            <div className="bg-white dark:bg-gray-800 p-4 rounded-2xl shadow-sm border border-gray-100 dark:border-gray-700 mb-4 flex flex-wrap gap-4 items-center animate-slide-up" style={{animationDelay: '50ms'}}>
                 <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-gray-500">类型:</span>
-                    <select value={filterType} onChange={e=>setFilterType(e.target.value)} className="bg-gray-50 dark:bg-gray-700 border-none rounded-xl px-3 py-2 font-bold text-sm outline-none">
+                    <select value={filterType} onChange={e=>setFilterType(e.target.value)} className="bg-gray-50 dark:bg-gray-700 border-none rounded-xl px-3 py-2 font-bold text-sm outline-none dark:text-white">
                         <option value="ALL">全部</option>
                         <option value="IN">入库</option>
                         <option value="OUT">出库</option>
@@ -205,17 +206,17 @@ export const Logs: React.FC = () => {
                 </div>
                 <div className="flex items-center gap-2">
                     <span className="text-sm font-bold text-gray-500">日期:</span>
-                    <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="bg-gray-50 dark:bg-gray-700 border-none rounded-xl px-2 py-2 text-sm font-bold"/>
+                    <input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)} className="bg-gray-50 dark:bg-gray-700 border-none rounded-xl px-2 py-2 text-sm font-bold dark:text-white"/>
                     <span className="text-gray-300">-</span>
-                    <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="bg-gray-50 dark:bg-gray-700 border-none rounded-xl px-2 py-2 text-sm font-bold"/>
+                    <input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)} className="bg-gray-50 dark:bg-gray-700 border-none rounded-xl px-2 py-2 text-sm font-bold dark:text-white"/>
                 </div>
-                <button onClick={loadData} className="ml-auto p-2 bg-black text-white rounded-xl hover:scale-105 transition-transform">
+                <button onClick={loadData} className="ml-auto p-2 bg-black text-white rounded-xl hover:scale-105 transition-transform shadow-lg">
                     <Icons.ArrowRightLeft size={18} className="rotate-0"/>
                 </button>
             </div>
 
             {/* Smart Product Search Bar */}
-            <div className="mb-6">
+            <div className="mb-6 animate-slide-up" style={{animationDelay: '100ms'}}>
                 <SmartSearch 
                     products={allProducts} 
                     categories={categories}
@@ -226,7 +227,7 @@ export const Logs: React.FC = () => {
             </div>
 
             {/* Logs List */}
-            <div className="glass-panel rounded-3xl overflow-hidden shadow-lg border border-white/20">
+            <div className="glass-panel rounded-3xl overflow-hidden shadow-lg border border-white/20 animate-slide-up" style={{animationDelay: '150ms'}}>
                 {loading ? (
                     <div className="p-8 text-center text-gray-500">加载中...</div>
                 ) : filteredLogs.length === 0 ? (
@@ -245,11 +246,11 @@ export const Logs: React.FC = () => {
                                     </tr>
                                 </thead>
                                 <tbody className="divide-y divide-black/5 dark:divide-white/5">
-                                    {filteredLogs.map(log => (
-                                        <tr key={log.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors group">
+                                    {filteredLogs.map((log, idx) => (
+                                        <tr key={log.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors group animate-slide-up opacity-0" style={{animationDelay: `${Math.min(idx * 30, 500)}ms`}}>
                                             <td className="p-5">
-                                                <div className="font-bold">{new Date(log.created_at).toLocaleDateString()}</div>
-                                                <div className="text-xs opacity-50 font-mono">{new Date(log.created_at).toLocaleTimeString()}</div>
+                                                <div className="font-bold dark:text-gray-200">{new Date(log.created_at).toLocaleDateString()}</div>
+                                                <div className="text-xs opacity-50 font-mono dark:text-gray-400">{new Date(log.created_at).toLocaleTimeString()}</div>
                                                 <div className="mt-1 flex items-center gap-1 text-xs font-bold opacity-70">
                                                     <Icons.User size={12}/> 
                                                     <UsernameBadge name={log.operator_id} roleLevel={userMap.get(log.operator_id) ?? 9} />
@@ -286,8 +287,8 @@ export const Logs: React.FC = () => {
 
                         {/* Mobile Card View */}
                         <div className="md:hidden">
-                            {filteredLogs.map(log => (
-                                <div key={log.id} onClick={()=>setSelectedLog(log)} className="p-4 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 active:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer">
+                            {filteredLogs.map((log, idx) => (
+                                <div key={log.id} onClick={()=>setSelectedLog(log)} className="p-4 border-b border-gray-100 dark:border-gray-700 hover:bg-gray-50 active:bg-gray-100 dark:hover:bg-gray-800 transition-colors cursor-pointer animate-slide-up opacity-0" style={{animationDelay: `${Math.min(idx * 30, 500)}ms`}}>
                                     <div className="flex justify-between items-start mb-2">
                                         <div>
                                             <div className="font-bold text-sm text-gray-900 dark:text-white">{formatLogContent(log).split('：')[1]?.split(' ')[0] || '操作详情'}</div>
@@ -334,29 +335,29 @@ export const Logs: React.FC = () => {
                 </div>
             </div>
 
-            {/* Mobile Log Detail Modal */}
-            {selectedLog && (
-                <div className="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-                    <div className="bg-white dark:bg-gray-900 w-full max-w-sm rounded-3xl p-6 shadow-2xl relative">
-                        <button onClick={()=>setSelectedLog(null)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-full"><Icons.Minus size={20}/></button>
+            {/* Mobile Log Detail Modal - Using Portal */}
+            {selectedLog && createPortal(
+                <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                    <div className="bg-white dark:bg-gray-900 w-full max-w-sm rounded-3xl p-6 shadow-2xl relative animate-scale-in border border-white/20">
+                        <button onClick={()=>setSelectedLog(null)} className="absolute top-4 right-4 p-2 bg-gray-100 dark:bg-gray-800 rounded-full hover:bg-gray-200 transition-colors"><Icons.Minus size={20}/></button>
                         
                         <h3 className="text-xl font-black mb-1 dark:text-white">日志详情</h3>
                         <p className="text-xs text-gray-500 mb-6 font-mono">{selectedLog.id}</p>
 
                         <div className="space-y-4">
-                            <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl">
+                            <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-2xl">
                                 <div className="text-xs text-gray-500 mb-1">操作类型</div>
                                 <span className={`px-3 py-1 rounded-lg text-sm font-bold inline-block ${getLogColor(selectedLog.action_type)}`}>
                                     {selectedLog.action_type}
                                 </span>
                             </div>
-                            <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-xl">
+                            <div className="bg-gray-50 dark:bg-gray-800 p-4 rounded-2xl">
                                 <div className="text-xs text-gray-500 mb-1">详情描述</div>
                                 <div className="font-bold text-gray-800 dark:text-gray-200 text-lg leading-relaxed">
                                     {formatLogContent(selectedLog)}
                                 </div>
                             </div>
-                            <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-800 p-4 rounded-xl">
+                            <div className="flex justify-between items-center bg-gray-50 dark:bg-gray-800 p-4 rounded-2xl">
                                 <div>
                                     <div className="text-xs text-gray-500 mb-1">操作人</div>
                                     <UsernameBadge name={selectedLog.operator_id} roleLevel={userMap.get(selectedLog.operator_id) ?? 9} />
@@ -372,13 +373,14 @@ export const Logs: React.FC = () => {
                         {!selectedLog.is_revoked && (
                             <button 
                                 onClick={()=>handleUndo(selectedLog)} 
-                                className="w-full mt-6 py-3 bg-red-50 text-red-600 rounded-xl font-bold border border-red-100 hover:bg-red-100"
+                                className="w-full mt-6 py-3 bg-red-50 text-red-600 rounded-2xl font-bold border border-red-100 hover:bg-red-100 transition-colors shadow-sm"
                             >
                                 撤销此操作
                             </button>
                         )}
                     </div>
-                </div>
+                </div>,
+                document.body
             )}
         </div>
     );

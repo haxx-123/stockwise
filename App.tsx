@@ -38,12 +38,41 @@ const StoreManagement = React.lazy(() => StoreManagementPromise().then(m => ({ d
 declare const window: any;
 declare const faceapi: any;
 
-const Splash = ({ isReady }: { isReady: boolean }) => (
-    <div className={`fixed inset-0 bg-[#888888] z-[9999] flex flex-col items-center justify-center transition-all duration-800 ease-out ${isReady ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-        <img src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" className="w-24 h-24 mb-6 drop-shadow-2xl object-contain animate-bounce" />
-        <h1 className="text-3xl font-black text-black tracking-[0.5em] text-center mb-8 uppercase">棱镜<br/><span className="text-xs tracking-[1em] text-gray-700 font-medium">StockWise</span></h1>
-    </div>
-);
+// --- New Splash Screen Component ---
+const Splash = ({ isReady }: { isReady: boolean }) => {
+    const [shouldRender, setShouldRender] = useState(true);
+
+    // Unmount from DOM after fade-out animation completes (1s)
+    useEffect(() => {
+        if (isReady) {
+            const timer = setTimeout(() => setShouldRender(false), 1200);
+            return () => clearTimeout(timer);
+        }
+    }, [isReady]);
+
+    if (!shouldRender) return null;
+
+    return (
+        <div className={`fixed inset-0 bg-[#e0e0e0] dark:bg-[#121212] z-[9999] flex flex-col items-center justify-between py-24 transition-opacity duration-1000 ease-out ${isReady ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
+            <div className="flex-1 flex flex-col items-center justify-center animate-fade-in">
+                <div className="relative w-32 h-32 mb-8">
+                    <img src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" className="w-full h-full object-contain drop-shadow-2xl" />
+                </div>
+                <h1 className="text-4xl font-black text-black dark:text-white tracking-[0.6em] ml-4 mb-3">棱镜</h1>
+                <p className="text-sm text-gray-500 tracking-[0.8em] font-medium uppercase mb-8">STOCKWISE</p>
+                
+                <div className="flex flex-col items-center gap-2">
+                    <div className="w-8 h-1 bg-black dark:bg-white rounded-full opacity-20"></div>
+                    <p className="text-xs text-gray-400 font-bold tracking-widest mt-2">智能库管 · 唯快不破</p>
+                </div>
+            </div>
+            
+            <div className="opacity-80 mix-blend-multiply dark:mix-blend-screen animate-slide-up" style={{animationDelay: '0.2s'}}>
+                <img src="https://i.ibb.co/8gLfYKCW/retouch-2025121313394035.png" className="h-20 object-contain" alt="Signature" />
+            </div>
+        </div>
+    );
+};
 
 // Top Right Actions Bar (Updated: Always visible icons)
 const TopActions = ({ onOpenAnnouncement, currentPage }: { onOpenAnnouncement: () => void, currentPage: string }) => {
@@ -161,17 +190,37 @@ const AppContent: React.FC = () => {
       else document.documentElement.classList.remove('dark');
   }, []);
 
-  // Boot
+  // --- BOOT LOGIC (Parallel & State-Driven) ---
   useEffect(() => {
       if (!isAuthenticated) return;
-      const fetchStores = async () => {
-          if (isConfigured()) { 
-               try { const sList = await dataService.getStores(); setStores(sList); } catch (e) { console.error(e); }
+
+      const bootSystem = async () => {
+          try {
+              if (isConfigured()) { 
+                   // PARALLEL EXECUTION: Fetch all core data required for the Dashboard & Sidebar immediately
+                   // This runs while the Splash screen is visible (z-index highest)
+                   const [sList, uList, aList] = await Promise.all([
+                       dataService.getStores(),
+                       dataService.getUsers(), // Warm up user cache
+                       dataService.getAnnouncements() // Warm up announcements
+                   ]);
+                   setStores(sList);
+              }
+          } catch (e) { 
+              console.error("System Boot Error:", e); 
+          } finally {
+              // PASSIVE DISAPPEARANCE:
+              // Data is loaded. Now we signal the app is ready.
+              // A tiny buffer (100ms) ensures React has committed the setStores update to the DOM.
+              setTimeout(() => {
+                  setIsReady(true);
+              }, 100);
           }
       };
-      const boot = async () => { await fetchStores(); setIsReady(true); };
-      boot();
-      const handleRefresh = () => fetchStores();
+
+      bootSystem();
+
+      const handleRefresh = () => { dataService.getStores().then(setStores); };
       window.addEventListener('REFRESH_STORES', handleRefresh);
       const handleSwitch = (e: any) => { setCurrentStoreId(e.detail); alert("已切换当前门店视图"); };
       window.addEventListener('SWITCH_STORE_ID', handleSwitch);
@@ -238,13 +287,15 @@ const AppContent: React.FC = () => {
     <TopActions onOpenAnnouncement={()=>setAnnouncementOpen(true)} currentPage={currentPage} />
     
     <div className="h-screen flex font-sans text-black overflow-hidden bg-[#888888] body-bg">
+      {/* Mobile Menu Button - Hidden when sidebar is OPEN */}
       {!mobileMenuOpen && (
           <div className="fixed top-4 left-4 z-[60] md:hidden">
               <button onClick={()=>setMobileMenuOpen(true)} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full"><Icons.Menu size={20}/></button>
           </div>
       )}
 
-      <div className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'} md:relative md:translate-x-0 md:inset-auto md:z-0 md:flex md:shrink-0`}>
+      {/* Sidebar Container */}
+      <div className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ease-out ${mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:relative md:translate-x-0 md:inset-auto md:z-0 md:flex md:shrink-0`}>
           <Sidebar 
              currentPage={currentPage} 
              onNavigate={(p) => { setCurrentPage(p); setMobileMenuOpen(false); }} 
@@ -254,7 +305,13 @@ const AppContent: React.FC = () => {
           />
       </div>
       
-      {mobileMenuOpen && <div className="fixed inset-0 bg-black/50 z-40 md:hidden" onClick={()=>setMobileMenuOpen(false)}></div>}
+      {/* Background Overlay - Click to Close */}
+      {mobileMenuOpen && (
+          <div 
+            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden animate-fade-in" 
+            onClick={()=>setMobileMenuOpen(false)}
+          ></div>
+      )}
       
       <div id="main-content-scroll" className="flex-1 flex flex-col h-full relative transition-all duration-300 overflow-hidden pt-24 md:pt-0 z-0">
         <div className="flex-1 overflow-auto custom-scrollbar p-0 relative pb-safe">
