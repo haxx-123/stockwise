@@ -1,18 +1,12 @@
+
 <!DOCTYPE html>
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <meta name="theme-color" content="#000000" />
     <title>棱镜-StockWise</title>
-    <!-- Favicon -->
-    <link rel="icon" href="https://i.ibb.co/vxTZMzfD/retouch-2025121122511132.png" type="image/png" />
-    <link rel="apple-touch-icon" href="https://i.ibb.co/vxTZMzfD/retouch-2025121122511132.png" />
+    <link rel="icon" href="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" type="image/png" />
     <link rel="manifest" href="/manifest.json">
-    
-    <link rel="preconnect" href="https://cdn.tailwindcss.com">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
       tailwind.config = {
@@ -20,85 +14,76 @@
         theme: {
           extend: {
             colors: {
-              gray: { 900: '#111827', 800: '#1f2937', 700: '#374151' },
-              prism: { bg: '#f5f5f7', text: '#000000' }
+              prism: { 
+                bg: '#e0e0e0', // Base grey for light mode to show glass effect
+                text: '#1a1a1a'
+              }
             },
             animation: {
-              'fade-in-up': 'fadeInUp 0.5s ease-out forwards',
-              'scale-in': 'scaleIn 0.3s ease-out forwards',
-              'slide-in-right': 'slideInRight 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards',
-              'fade-out': 'fadeOut 0.8s ease-out forwards',
+              'fade-in': 'fadeIn 0.3s ease-out',
+              'slide-up': 'slideUp 0.4s cubic-bezier(0.16, 1, 0.3, 1)',
             },
             keyframes: {
-              fadeInUp: {
-                '0%': { opacity: '0', transform: 'translateY(20px)' },
-                '100%': { opacity: '1', transform: 'translateY(0)' },
-              },
-              scaleIn: {
-                '0%': { opacity: '0', transform: 'scale(0.95)' },
-                '100%': { opacity: '1', transform: 'scale(1)' },
-              },
-              slideInRight: {
-                '0%': { transform: 'translateX(100%)' },
-                '100%': { transform: 'translateX(0)' },
-              },
-              fadeOut: {
-                '0%': { opacity: '1' },
-                '100%': { opacity: '0', pointerEvents: 'none' },
-              }
+              fadeIn: { '0%': { opacity: '0' }, '100%': { opacity: '1' } },
+              slideUp: { '0%': { transform: 'translateY(20px)', opacity: '0' }, '100%': { transform: 'translateY(0)', opacity: '1' } }
             }
           }
         }
       }
     </script>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Excel Parsing -->
     <script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
-    <!-- Screenshot -->
     <script src="https://html2canvas.hertzen.com/dist/html2canvas.min.js"></script>
-    <!-- QR Code Scanner -->
+    <!-- Updated QR/Face Libs -->
     <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
-    <!-- Face API -->
     <script defer src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+    <!-- Image Compression -->
+    <script type="text/javascript" src="https://cdn.jsdelivr.net/npm/browser-image-compression@2.0.2/dist/browser-image-compression.js"></script>
+
     <style>
       body {
         font-family: 'Inter', sans-serif;
-        background-color: #f3f4f6;
+        background-color: #2d2d2d; /* Default Darker Base for contrast */
+        color: #ffffff;
         overflow-x: hidden;
         -webkit-tap-highlight-color: transparent;
       }
-      .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
-      .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 99px; }
-      .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+      /* PRISM DEEP GLASSMORPHISM THEME */
+      .glass-panel {
+        background: rgba(255, 255, 255, 0.15) !important;
+        backdrop-filter: blur(25px) !important;
+        -webkit-backdrop-filter: blur(25px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.2) !important;
+        box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
+      }
       
-      /* Prism Theme: Low saturation white, black text */
-      html.theme-prism body { 
-        background-color: #f2f2f2 !important; 
-        color: #000000 !important; 
+      /* Dark Mode Overrides */
+      html.dark body { background-color: #000000 !important; }
+      html.dark .glass-panel {
+        background: rgba(0, 0, 0, 0.4) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        color: #ffffff !important;
       }
-      html.theme-prism .bg-white, 
-      html.theme-prism .dark\:bg-gray-800,
-      html.theme-prism .dark\:bg-gray-900 {
-        background-color: rgba(255, 255, 255, 0.85) !important;
-        backdrop-filter: blur(12px) !important;
-        border-color: rgba(0,0,0,0.15) !important;
-        color: #000000 !important;
-      }
-      html.theme-prism input, html.theme-prism select, html.theme-prism textarea {
-          border: 1px solid #000000 !important;
-          color: #000000 !important;
-          background-color: rgba(255,255,255,0.6) !important;
-      }
-      html.theme-prism .text-gray-500, html.theme-prism .text-gray-400 {
-          color: #333333 !important;
+      html.dark input, html.dark select, html.dark textarea {
+          background: rgba(0,0,0,0.5) !important;
+          border-color: rgba(255,255,255,0.3) !important;
+          color: white !important;
       }
 
-      .stagger-1 { animation-delay: 50ms; }
-      .stagger-2 { animation-delay: 100ms; }
-      .stagger-3 { animation-delay: 150ms; }
-      .stagger-4 { animation-delay: 200ms; }
-      .stagger-5 { animation-delay: 250ms; }
+      /* Light Mode Overrides (Default Prism) */
+      html:not(.dark) body { background-color: #888888 !important; /* Mid-grey to show glass */ }
+      html:not(.dark) .text-gray-500 { color: #e5e5e5 !important; }
+      html:not(.dark) input, html:not(.dark) select {
+          background: rgba(255,255,255,0.2);
+          border: 1px solid rgba(255,255,255,0.3);
+          color: white;
+      }
+      html:not(.dark) input::placeholder { color: rgba(255,255,255,0.6); }
+
+      .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+      .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+      .custom-scrollbar::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.3); border-radius: 99px; }
     </style>
   <script type="importmap">
 {
@@ -109,13 +94,20 @@
     "@google/genai": "https://aistudiocdn.com/@google/genai@^1.31.0",
     "recharts": "https://aistudiocdn.com/recharts@^3.5.1",
     "@supabase/supabase-js": "https://esm.sh/@supabase/supabase-js@2",
-    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5"
+    "xlsx": "https://aistudiocdn.com/xlsx@^0.18.5",
+    "browser-image-compression": "https://esm.sh/browser-image-compression@^2.0.2"
   }
 }
 </script>
 </head>
   <body>
     <div id="root"></div>
-    <script type="module" src="/index.tsx"></script>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/sw.js');
+        });
+      }
+    </script>
   </body>
 </html>

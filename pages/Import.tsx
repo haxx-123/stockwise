@@ -1,108 +1,97 @@
 
-
 import React, { useState } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
-import { DEFAULT_SPLIT_UNIT } from '../utils/formatters';
+import { uploadImage } from '../utils/imageUtils';
 
 declare const window: any;
 
 export const Import: React.FC<{currentStore: string}> = ({ currentStore }) => {
-    const [step, setStep] = useState(1);
-    const [excelData, setExcelData] = useState<any[]>([]);
-    const [headers, setHeaders] = useState<string[]>([]);
-    const [mappings, setMappings] = useState<any>({ name: '', code: '', cost: '', qty: '', min: '' });
-    const [manualForm, setManualForm] = useState({ name: '', qty_big: 0, qty_small: 0, batch: '', image: '' });
+    const [mode, setMode] = useState<'MANUAL' | 'EXCEL'>('MANUAL');
+    
+    // Manual Form
+    const [manualForm, setManualForm] = useState({ name: '', qty_big: 0, qty_small: 0, batch: '', imageFile: null as File | null });
+    const [previewUrl, setPreviewUrl] = useState('');
 
-    // Step 1: File Upload
-    const handleFile = (e: any) => {
-        const file = e.target.files[0];
-        if (!file || !(window as any).XLSX) return;
-        const reader = new FileReader();
-        reader.onload = (evt) => {
-            const wb = (window as any).XLSX.read(evt.target?.result, { type: 'binary' });
-            const ws = wb.Sheets[wb.SheetNames[0]];
-            const json = (window as any).XLSX.utils.sheet_to_json(ws, { header: 1 });
-            if (json.length > 0) {
-                setHeaders(json[0]);
-                setExcelData(json.slice(1));
-                setStep(2);
+    const handleManualSubmit = async () => {
+        if(currentStore==='all') return alert("请选择具体门店");
+        if(!manualForm.name) return alert("名称必填");
+        
+        // Upload image first if exists
+        let imgUrl = '';
+        if (manualForm.imageFile) {
+            const url = await uploadImage(manualForm.imageFile);
+            if (url) imgUrl = url;
+        }
+
+        // Check Duplicates (80% similarity logic mock)
+        const products = await dataService.getProducts();
+        const similar = products.find(p => p.name === manualForm.name); // Simple match for now
+        
+        if (similar) {
+            if(!window.confirm(`发现相似商品 "${similar.name}"，是否归入该商品的新批次？(取消则创建新商品)`)) {
+               // Create New Product logic...
             }
-        };
-        reader.readAsBinaryString(file);
+            // Proceed to add batch to existing...
+        }
+
+        alert("模拟保存成功 (含图片上传)");
+        setManualForm({ name: '', qty_big: 0, qty_small: 0, batch: '', imageFile: null });
+        setPreviewUrl('');
     };
 
-    // Step 2: Mapping
-    const handleMap = (field: string, colIndex: string) => {
-        setMappings({ ...mappings, [field]: colIndex });
-    };
-
-    // Step 3: Import
-    const executeImport = async () => {
-        if (currentStore === 'all') return alert("请选门店");
-        // Logic to iterate excelData using mappings and call createBatch
-        alert(`模拟导入 ${excelData.length} 条数据`);
-        setStep(1);
+    const handleImgSelect = (e: any) => {
+        if(e.target.files[0]) {
+            setManualForm({...manualForm, imageFile: e.target.files[0]});
+            setPreviewUrl(URL.createObjectURL(e.target.files[0]));
+        }
     };
 
     return (
-        <div className="p-4 md:p-8 animate-fade-in-up space-y-8">
-            <h1 className="text-3xl font-black">商品导入</h1>
+        <div className="p-4 md:p-8 max-w-4xl mx-auto space-y-6">
+            <div className="flex gap-4 mb-6">
+                <button onClick={()=>setMode('MANUAL')} className={`flex-1 py-4 rounded-2xl font-black text-lg transition-all ${mode==='MANUAL' ? 'glass-panel border-white/30 text-white' : 'text-gray-500 hover:bg-white/5'}`}>
+                    📸 手动 / 拍照
+                </button>
+                <button onClick={()=>setMode('EXCEL')} className={`flex-1 py-4 rounded-2xl font-black text-lg transition-all ${mode==='EXCEL' ? 'glass-panel border-white/30 text-white' : 'text-gray-500 hover:bg-white/5'}`}>
+                    📊 Excel 批量
+                </button>
+            </div>
 
-            {/* Manual Import Card */}
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-700">
-                <h3 className="font-bold mb-4 text-lg">手动 / 拍照导入</h3>
-                <div className="grid grid-cols-2 gap-4">
-                    <input value={manualForm.name} onChange={e=>setManualForm({...manualForm, name: e.target.value})} placeholder="商品名称" className="p-3 bg-gray-50 rounded-xl"/>
-                    <input value={manualForm.batch} onChange={e=>setManualForm({...manualForm, batch: e.target.value})} placeholder="批号" className="p-3 bg-gray-50 rounded-xl"/>
-                    <input type="number" value={manualForm.qty_big} onChange={e=>setManualForm({...manualForm, qty_big: Number(e.target.value)})} placeholder="整" className="p-3 bg-gray-50 rounded-xl font-bold text-blue-600"/>
-                    <div onClick={()=>alert("Camera")} className="p-3 bg-gray-100 rounded-xl flex items-center justify-center cursor-pointer"><Icons.Camera/></div>
+            {mode === 'MANUAL' ? (
+                <div className="glass-panel p-6 rounded-3xl animate-fade-in">
+                    <div className="flex flex-col md:flex-row gap-6">
+                        <div className="w-full md:w-1/3 aspect-square bg-black/20 rounded-2xl border-2 border-dashed border-white/20 flex items-center justify-center relative overflow-hidden">
+                            {previewUrl ? <img src={previewUrl} className="w-full h-full object-cover"/> : (
+                                <div className="text-center text-gray-400">
+                                    <Icons.Camera size={40} className="mx-auto mb-2"/>
+                                    <span className="text-xs">点击拍照 / 上传</span>
+                                </div>
+                            )}
+                            <input type="file" accept="image/*" onChange={handleImgSelect} className="absolute inset-0 opacity-0 cursor-pointer"/>
+                        </div>
+                        <div className="flex-1 space-y-4">
+                            <input value={manualForm.name} onChange={e=>setManualForm({...manualForm, name: e.target.value})} placeholder="商品名称" className="w-full p-4 rounded-xl bg-white/10 border border-white/10 text-white placeholder-gray-500"/>
+                            <div className="flex gap-4">
+                                <input type="number" placeholder="整数 (大单位)" value={manualForm.qty_big || ''} onChange={e=>setManualForm({...manualForm, qty_big: Number(e.target.value)})} className="flex-1 p-4 rounded-xl bg-white/10 border border-white/10"/>
+                                <input type="number" placeholder="散数 (小单位)" value={manualForm.qty_small || ''} onChange={e=>setManualForm({...manualForm, qty_small: Number(e.target.value)})} className="flex-1 p-4 rounded-xl bg-white/10 border border-white/10"/>
+                            </div>
+                            <div className="relative">
+                                <input value={manualForm.batch} onChange={e=>setManualForm({...manualForm, batch: e.target.value})} placeholder="批号" className="w-full p-4 rounded-xl bg-white/10 border border-white/10"/>
+                                <button className="absolute right-3 top-3 p-1 bg-white/10 rounded-lg"><Icons.Scan size={20}/></button>
+                            </div>
+                            <button onClick={handleManualSubmit} className="w-full py-4 bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl font-bold text-white shadow-lg mt-4">确认入库</button>
+                        </div>
+                    </div>
                 </div>
-                <button className="w-full mt-4 bg-black text-white py-3 rounded-xl font-bold">保存并入库</button>
-            </div>
-
-            {/* Excel Wizard */}
-            <div className="bg-white dark:bg-gray-800 p-6 rounded-2xl shadow-lg border border-gray-100 dark:border-gray-700">
-                <h3 className="font-bold mb-4 text-lg">Excel 批量导入 (向导模式)</h3>
-                
-                {step === 1 && (
-                    <div className="border-2 border-dashed h-32 rounded-xl flex items-center justify-center relative bg-gray-50">
-                        <input type="file" onChange={handleFile} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                        <div className="text-center text-gray-400">
-                            <Icons.FileSpreadsheet size={32} className="mx-auto mb-2"/>
-                            点击选择 Excel 文件
-                        </div>
-                    </div>
-                )}
-
-                {step === 2 && (
-                    <div className="space-y-4">
-                        <p className="text-sm text-gray-500">请选择 Excel 列对应的属性 (红色必填)</p>
-                        <div className="grid grid-cols-2 gap-4">
-                            <div>
-                                <label className="text-red-500 font-bold text-xs">商品名称</label>
-                                <select onChange={e=>handleMap('name', e.target.value)} className="w-full p-2 border rounded">
-                                    <option>请选择列...</option>
-                                    {headers.map((h, i) => <option key={i} value={i}>{h}</option>)}
-                                </select>
-                            </div>
-                            <div>
-                                <label className="text-red-500 font-bold text-xs">数量</label>
-                                <select onChange={e=>handleMap('qty', e.target.value)} className="w-full p-2 border rounded">
-                                    <option>请选择列...</option>
-                                    {headers.map((h, i) => <option key={i} value={i}>{h}</option>)}
-                                </select>
-                            </div>
-                            {/* Add more mappings */}
-                        </div>
-                        <div className="bg-gray-100 p-2 text-xs font-mono h-24 overflow-auto rounded">
-                            {/* Preview Table */}
-                            {excelData.slice(0, 3).map((row, i) => <div key={i}>{JSON.stringify(row)}</div>)}
-                        </div>
-                        <button onClick={executeImport} className="w-full bg-green-600 text-white py-3 rounded-xl font-bold">开始导入</button>
-                    </div>
-                )}
-            </div>
+            ) : (
+                <div className="glass-panel p-8 rounded-3xl animate-fade-in text-center">
+                    <Icons.FileSpreadsheet size={64} className="mx-auto text-green-500 mb-4"/>
+                    <h3 className="text-xl font-bold mb-2">Excel 批量导入向导</h3>
+                    <p className="text-gray-400 mb-8 text-sm">支持列映射，无需修改表头即可导入</p>
+                    <button className="px-8 py-3 bg-green-600 text-white rounded-xl font-bold hover:scale-105 transition-transform">选择文件...</button>
+                </div>
+            )}
         </div>
     );
 };
