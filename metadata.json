@@ -1,6 +1,6 @@
 {
-  "name": "棱镜",
-  "description": "智能库管系统",
+  "name": "棱镜-StockWise",
+  "description": "StockWise-智能库管系统",
   "requestFramePermissions": [
     "camera"
   ]

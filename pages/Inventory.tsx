@@ -1,317 +1,506 @@
-
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
-import { AggregatedStock, Product } from '../types';
-import { formatUnit } from '../utils/formatters';
-import { SmartSearch } from '../components/SmartSearch';
-import { matchProduct, getUniqueCategories } from '../utils/searchHelper';
-import { createPortal } from 'react-dom';
+import { Batch, Product, Store, AggregatedStock } from '../types';
+import { isConfigured } from '../services/supabaseClient';
+import { formatUnit, ph, matchSearch, getUnitSplit, generatePageSummary } from '../utils/formatters';
 
+declare const Html5Qrcode: any;
 declare const window: any;
 
-// Define Props for InventoryTable
-export interface InventoryTableProps {
-    data: AggregatedStock[];
-    onRefresh: () => void;
-    currentStore: string;
-    compact?: boolean;
-    deleteMode?: boolean;
-    selectedToDelete?: Set<string>;
-    selectedBatchIds?: Set<string>;
-    onMobileClick?: (item: AggregatedStock) => void;
-    mobileExpanded?: boolean;
-    isMobileOverlay?: boolean;
-    isViewer?: boolean; // Prop to hide actions
+interface InventoryProps {
+  currentStore?: string;
 }
 
-export const InventoryTable: React.FC<InventoryTableProps> = ({ 
-    data, onRefresh, currentStore, compact, deleteMode, 
-    selectedToDelete, selectedBatchIds, onMobileClick, 
-    mobileExpanded, isMobileOverlay, isViewer 
-}) => {
-    const [expanded, setExpanded] = useState<Set<string>>(new Set());
-    const [billModal, setBillModal] = useState<{batch:any, product:any} | null>(null);
-    // Image Modal State
-    const [previewImage, setPreviewImage] = useState<string | null>(null);
+export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [batches, setBatches] = useState<Batch[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [stores, setStores] = useState<Store[]>([]);
 
-    // If mobileExpanded is true, expand all (for detail view)
-    useEffect(() => {
-        if (mobileExpanded) {
-            const allIds = new Set(data.map(i => i.product.id));
-            setExpanded(allIds);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isScanning, setIsScanning] = useState(false);
+  const scannerRef = useRef<any>(null);
+  const [selectedCategory, setSelectedCategory] = useState('All');
+
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 15;
+  const [deleteMode, setDeleteMode] = useState(false);
+  const [selectedToDelete, setSelectedToDelete] = useState<Set<string>>(new Set());
+  const [selectedBatchIds, setSelectedBatchIds] = useState<Set<string>>(new Set());
+  
+  const [mobileDetailItem, setMobileDetailItem] = useState<AggregatedStock | null>(null);
+
+  const loadData = async () => {
+    setLoading(true);
+    try {
+      const [p, b, s] = await Promise.all([
+        dataService.getProducts(false, currentStore),
+        // Important: If currentStore is 'all', getBatches returns batches from ALL stores.
+        dataService.getBatches(currentStore === 'all' ? undefined : currentStore),
+        dataService.getStores()
+      ]);
+      setProducts(p);
+      setBatches(b);
+      setStores(s);
+    } catch (e) { console.error(e); }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => {
+    if (isConfigured()) loadData();
+    setPage(1);
+    setSelectedToDelete(new Set());
+    setSelectedBatchIds(new Set());
+  }, [currentStore]);
+
+  // Scanner Logic
+  const startScanner = async () => {
+      if (isScanning) { stopScanner(); return; }
+      try {
+          const html5QrCode = new Html5Qrcode("search-reader");
+          scannerRef.current = html5QrCode;
+          setIsScanning(true);
+          await html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (decodedText: string) => {
+              setSearchQuery(decodedText);
+              stopScanner();
+          }, () => {});
+      } catch (err) { alert("Scanner failed"); setIsScanning(false); }
+  };
+  const stopScanner = async () => {
+      if (scannerRef.current) { try { await scannerRef.current.stop(); await scannerRef.current.clear(); } catch(e){} }
+      setIsScanning(false);
+  };
+  useEffect(() => () => { if(scannerRef.current) stopScanner(); }, []);
+
+  const aggregatedData = useMemo(() => {
+    const map = new Map<string, AggregatedStock>();
+    products.forEach(p => {
+        const key = `${p.name}::${p.sku || ''}`;
+        if (!map.has(key)) map.set(key, { product: p, totalQuantity: 0, batches: [], expiringSoon: 0 });
+    });
+    batches.forEach(b => {
+        const product = products.find(p => p.id === b.product_id);
+        if (product) {
+            const key = `${product.name}::${product.sku || ''}`;
+            if (map.has(key)) {
+                const agg = map.get(key)!;
+                agg.totalQuantity += b.quantity; 
+                agg.batches.push(b); 
+            }
         }
-    }, [mobileExpanded, data]);
-
-    const handleRowClick = (item: AggregatedStock, e: React.MouseEvent) => {
-        // Prevent row expansion if clicking image
-        if ((e.target as HTMLElement).closest('.img-preview')) return;
-
-        // Intelligent View Switching
-        if (window.innerWidth < 768) {
-            if (onMobileClick) onMobileClick(item);
-        } else {
-            const newSet = new Set(expanded);
-            if(newSet.has(item.product.id)) newSet.delete(item.product.id); else newSet.add(item.product.id);
-            setExpanded(newSet);
+    });
+    let result = Array.from(map.values());
+    result = result.filter(item => {
+        if (selectedCategory !== 'All' && (item.product.category || '未分类') !== selectedCategory) return false;
+        if (searchQuery) {
+            const q = searchQuery.trim();
+            if (!matchSearch(item.product.name, q) && !item.product.sku?.toLowerCase().includes(q.toLowerCase()) && !item.batches.some(b => b.batch_number?.toLowerCase().includes(q.toLowerCase()))) return false;
         }
-    };
+        return true;
+    });
+    return result;
+  }, [batches, products, searchQuery, selectedCategory]);
 
-    const BillModal = () => {
-        if (!billModal) return null;
-        const [type, setType] = useState<'IN'|'OUT'>('OUT');
-        const [qty, setQty] = useState(0);
-        const [unit, setUnit] = useState('BIG');
+  const categories = useMemo(() => ['All', ...new Set(products.map(p => p.category || '未分类'))], [products]);
+  const totalPages = Math.ceil(aggregatedData.length / PAGE_SIZE);
+  const paginatedData = aggregatedData.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
-        const handleSubmit = async () => {
-            const ratio = billModal.product.split_ratio || 1;
-            const finalQty = unit === 'BIG' ? qty * ratio : qty;
-            try {
-                await dataService.updateStock(billModal.product.id, billModal.batch.store_id, finalQty, type, '快速开单', billModal.batch.id);
-                setBillModal(null);
-                onRefresh();
-            } catch(e:any) { alert(e.message); }
-        };
+  // --- GLOBAL TOOL LISTENERS ---
+  useEffect(() => {
+      const handleToolAction = (e: any) => {
+          const { action } = e.detail;
+          // Use aggregatedData (all filtered results) instead of just paginatedData for export
+          const dataToExport = aggregatedData; 
+          
+          if (dataToExport.length === 0) {
+              alert("当前列表为空，无法导出");
+              return;
+          }
 
-        return createPortal(
-            <div className="fixed inset-0 z-[200] bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm animate-fade-in">
-                <div className="bg-white dark:bg-gray-800 rounded-3xl p-8 w-full max-w-sm shadow-2xl animate-scale-in border border-white/20">
-                    <h3 className="text-xl font-black mb-6 dark:text-white">库存操作</h3>
-                    <div className="flex bg-gray-100 dark:bg-gray-700 rounded-2xl p-1 mb-6">
-                        <button onClick={()=>setType('IN')} className={`flex-1 py-3 rounded-xl font-bold transition-all ${type==='IN'?'bg-white dark:bg-gray-600 shadow text-green-600 dark:text-green-400':'text-gray-500 dark:text-gray-400'}`}>入库</button>
-                        <button onClick={()=>setType('OUT')} className={`flex-1 py-3 rounded-xl font-bold transition-all ${type==='OUT'?'bg-white dark:bg-gray-600 shadow text-red-600 dark:text-red-400':'text-gray-500 dark:text-gray-400'}`}>出库</button>
-                    </div>
-                    <div className="flex gap-3 mb-6">
-                        <input type="number" placeholder="数量" onChange={e=>setQty(Number(e.target.value))} className="flex-1 p-4 bg-gray-50 dark:bg-gray-900 rounded-2xl font-bold text-xl outline-none dark:text-white"/>
-                        <select onChange={e=>setUnit(e.target.value)} className="bg-gray-50 dark:bg-gray-900 rounded-2xl px-4 font-bold outline-none dark:text-white">
-                            <option value="BIG">{billModal.product.unit_name || '整'}</option>
-                            <option value="SMALL">{billModal.product.split_unit_name || '散'}</option>
-                        </select>
-                    </div>
-                    <div className="flex gap-3">
-                        <button onClick={()=>setBillModal(null)} className="flex-1 py-4 bg-gray-200 dark:bg-gray-700 rounded-2xl font-bold dark:text-white hover:opacity-80">取消</button>
-                        <button onClick={handleSubmit} className="flex-1 py-4 bg-black text-white rounded-2xl font-bold shadow-lg hover:scale-[1.02] active:scale-95 transition-all">确定</button>
-                    </div>
-                </div>
-            </div>,
-            document.body
-        );
+          if (action === 'COPY') {
+              const text = generatePageSummary('inventory', dataToExport);
+              navigator.clipboard.writeText(text).then(() => alert("已复制库存清单到剪贴板"));
+          } else if (action === 'EXCEL') {
+              if (!(window as any).XLSX) return alert("Excel 组件未加载");
+              const excelRows = dataToExport.flatMap(item => {
+                  if (item.batches.length === 0) {
+                      return [{
+                          商品名: item.product.name, SKU: item.product.sku, 类别: item.product.category, 
+                          总库存: formatUnit(item.totalQuantity, item.product),
+                          批号: '无', 数量: 0, 效期: '-'
+                      }];
+                  }
+                  return item.batches.map(b => ({
+                      商品名: item.product.name, SKU: item.product.sku, 类别: item.product.category,
+                      总库存: formatUnit(item.totalQuantity, item.product),
+                      批号: b.batch_number,
+                      门店: b.store_name,
+                      数量: formatUnit(b.quantity, item.product),
+                      效期: b.expiry_date ? b.expiry_date.split('T')[0] : '无'
+                  }));
+              });
+              
+              const ws = (window as any).XLSX.utils.json_to_sheet(excelRows);
+              const wb = (window as any).XLSX.utils.book_new();
+              (window as any).XLSX.utils.book_append_sheet(wb, ws, "Inventory");
+              (window as any).XLSX.writeFile(wb, `Inventory_${new Date().toISOString().slice(0,10)}.xlsx`);
+          }
+      };
+
+      window.addEventListener('SW_TOOL_ACTION', handleToolAction);
+      return () => window.removeEventListener('SW_TOOL_ACTION', handleToolAction);
+  }, [aggregatedData]);
+
+
+  const handleBulkDelete = async () => {
+      if (selectedToDelete.size + selectedBatchIds.size === 0) return;
+      if (!confirm(`确认删除选中的 ${selectedToDelete.size} 个商品和 ${selectedBatchIds.size} 个批次? (软删除)`)) return;
+      try {
+          for (const bid of selectedBatchIds) await dataService.deleteBatch(bid);
+          for (const pid of selectedToDelete) await dataService.deleteProduct(pid);
+          alert("删除成功"); setSelectedToDelete(new Set()); setSelectedBatchIds(new Set()); setDeleteMode(false); loadData();
+      } catch(e: any) { alert(e.message); }
+  };
+
+  const handleSelectAllOnPage = () => {
+      const newProdSet = new Set(selectedToDelete);
+      const newBatchSet = new Set(selectedBatchIds);
+      const allSelected = paginatedData.length > 0 && paginatedData.every(item => newProdSet.has(item.product.id));
+      if (allSelected) {
+          paginatedData.forEach(item => {
+              newProdSet.delete(item.product.id);
+              item.batches.forEach(b => newBatchSet.delete(b.id));
+          });
+      } else {
+          paginatedData.forEach(item => {
+              newProdSet.add(item.product.id);
+              item.batches.forEach(b => newBatchSet.add(b.id));
+          });
+      }
+      setSelectedToDelete(newProdSet); setSelectedBatchIds(newBatchSet);
+  };
+
+  const toggleSelectProduct = (pid: string, batchIds: string[]) => {
+      const newProdSet = new Set(selectedToDelete);
+      const newBatchSet = new Set(selectedBatchIds);
+      if (newProdSet.has(pid)) { newProdSet.delete(pid); batchIds.forEach(bid => newBatchSet.delete(bid)); } 
+      else { newProdSet.add(pid); batchIds.forEach(bid => newBatchSet.add(bid)); }
+      setSelectedToDelete(newProdSet); setSelectedBatchIds(newBatchSet);
+  };
+  const toggleSelectBatch = (bid: string) => {
+      const newSet = new Set(selectedBatchIds);
+      if (newSet.has(bid)) newSet.delete(bid); else newSet.add(bid);
+      setSelectedBatchIds(newSet);
+  };
+
+  if (loading) return <div className="p-8 dark:text-white">加载中...</div>;
+
+  return (
+    <div className="p-4 md:p-6 max-w-7xl mx-auto space-y-6">
+      <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-4">
+          <div className="flex flex-col md:flex-row gap-4 items-center">
+              <div className="flex items-center gap-2 w-full md:w-auto">
+                   <button onClick={() => deleteMode ? handleBulkDelete() : setDeleteMode(true)} className={`px-4 py-2 rounded-lg font-bold transition-colors w-full md:w-auto ${deleteMode ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
+                      {deleteMode ? `确认删除 (${selectedToDelete.size + selectedBatchIds.size})` : '删除 (管理)'}
+                   </button>
+                   {deleteMode && (
+                       <label className="flex items-center gap-1 cursor-pointer select-none">
+                           <input type="checkbox" onChange={handleSelectAllOnPage} className="w-5 h-5 accent-red-600 rounded border-2 border-white" />
+                           <span className="text-sm font-bold dark:text-white">全选本页</span>
+                       </label>
+                   )}
+              </div>
+              
+              {deleteMode && <button onClick={()=>{setDeleteMode(false); setSelectedToDelete(new Set());}} className="text-gray-500 underline text-sm dark:text-gray-400">取消</button>}
+
+              <div className="flex-1 relative w-full">
+                  <input type="text" placeholder="搜索... (支持扫码枪)" autoFocus className="w-full pl-10 pr-10 py-2 border rounded-lg dark:bg-gray-700 dark:border-gray-600 dark:text-white" value={searchQuery} onChange={e => {setSearchQuery(e.target.value); setPage(1);}} />
+                  <div className="absolute left-3 top-2.5 text-gray-400"><Icons.Sparkles size={18}/></div>
+                  <button onClick={startScanner} className="absolute right-2 top-1.5 p-1 bg-gray-100 dark:bg-gray-600 rounded"><Icons.Scan size={18}/></button>
+              </div>
+              <div id="search-reader" className={isScanning ? 'block' : 'hidden'}></div>
+              
+              <select value={selectedCategory} onChange={e => {setSelectedCategory(e.target.value); setPage(1);}} className="border rounded-lg px-4 py-2 dark:bg-gray-700 dark:text-white flex-1 md:flex-none">
+                  {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+          </div>
+      </div>
+
+      <InventoryTable 
+        data={paginatedData} 
+        onRefresh={loadData} 
+        currentStore={currentStore}
+        deleteMode={deleteMode}
+        selectedToDelete={selectedToDelete}
+        toggleSelectProduct={toggleSelectProduct}
+        selectedBatchIds={selectedBatchIds}
+        toggleSelectBatch={toggleSelectBatch}
+        onMobileClick={(item: any) => setMobileDetailItem(item)}
+        handleSelectAllOnPage={handleSelectAllOnPage}
+      />
+
+      <div className="flex justify-between items-center bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm">
+           <button disabled={page<=1} onClick={()=>setPage(p=>p-1)} className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50 dark:text-white">上一页</button>
+           <span className="text-sm text-gray-500 dark:text-gray-400">Page {page} of {totalPages}</span>
+           <button disabled={page>=totalPages} onClick={()=>setPage(p=>p+1)} className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50 dark:text-white">下一页</button>
+      </div>
+
+      {mobileDetailItem && (
+          <div className="fixed inset-0 bg-gray-50 dark:bg-gray-900 z-50 overflow-y-auto animate-fade-in p-4 pb-24">
+              <div className="flex items-center gap-3 mb-4 sticky top-0 bg-gray-50 dark:bg-gray-900 z-10 py-2 border-b dark:border-gray-800">
+                  <button onClick={() => setMobileDetailItem(null)} className="p-2 bg-white dark:bg-gray-800 rounded-full shadow"><Icons.ArrowRightLeft size={20} className="transform rotate-180 dark:text-white"/></button>
+                  <h1 className="font-bold text-lg dark:text-white">{mobileDetailItem.product.name} - 详情</h1>
+              </div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border dark:border-gray-700 mb-4">
+                  <div className="flex justify-between items-center">
+                       <div>
+                           <div className="text-xs text-gray-500">SKU: {mobileDetailItem.product.sku}</div>
+                           <div className="text-xs text-gray-500">类别: {mobileDetailItem.product.category}</div>
+                       </div>
+                       <div className="text-right">
+                           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{formatUnit(mobileDetailItem.totalQuantity, mobileDetailItem.product)}</div>
+                       </div>
+                  </div>
+              </div>
+
+              <h3 className="font-bold dark:text-white mb-2">批次列表</h3>
+              <InventoryTable 
+                  data={[mobileDetailItem]} 
+                  onRefresh={loadData} 
+                  currentStore={currentStore}
+                  deleteMode={deleteMode}
+                  selectedToDelete={selectedToDelete}
+                  selectedBatchIds={selectedBatchIds}
+                  mobileExpanded={true} 
+                  isMobileOverlay={true}
+              />
+          </div>
+      )}
+    </div>
+  );
+};
+
+export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, selectedToDelete, toggleSelectProduct, selectedBatchIds, toggleSelectBatch, onMobileClick, mobileExpanded, isMobileOverlay }: any) => {
+    const [expandedProducts, setExpandedProducts] = useState<Set<string>>(new Set());
+    const [editProduct, setEditProduct] = useState<Product | null>(null);
+    const [adjustBatch, setAdjustBatch] = useState<Batch | null>(null);
+    const [billBatch, setBillBatch] = useState<Batch | null>(null);
+
+    const toggleExpand = (pid: string) => {
+        const newSet = new Set(expandedProducts);
+        if (newSet.has(pid)) newSet.delete(pid); else newSet.add(pid);
+        setExpandedProducts(newSet);
     };
 
     return (
-        <div className="space-y-4">
-            {!compact && !isMobileOverlay && (
-                <div className="hidden md:flex px-6 py-2 font-bold text-gray-500 text-sm">
-                    <div className="w-16">图片</div>
-                    <div className="w-1/3">商品名称 / 规格</div>
-                    <div className="w-1/3 text-center">分类 / SKU</div>
-                    <div className="w-1/3 text-right">当前库存总量</div>
-                    <div className="w-8"></div>
-                </div>
-            )}
-
-            {data.map((item, idx) => (
-                <div 
-                    key={item.product.id} 
-                    className={`glass-panel rounded-2xl overflow-hidden animate-slide-up opacity-0 ${compact ? 'border border-gray-100' : 'shadow-sm hover:shadow-md transition-shadow'}`}
-                    style={{ animationDelay: `${Math.min(idx * 50, 600)}ms` }}
-                >
-                    <div className="p-5 flex flex-col md:flex-row md:items-center cursor-pointer hover:bg-white/10 transition-colors" 
-                        onClick={(e) => handleRowClick(item, e)}
-                    >
-                        {/* Image Thumbnail */}
-                        <div className="hidden md:block w-16 mr-6 img-preview">
-                            {item.product.image_url ? (
-                                <img 
-                                    src={item.product.image_url} 
-                                    alt="thumb" 
-                                    className="w-14 h-14 rounded-2xl object-cover bg-gray-100 border border-gray-200 hover:scale-110 transition-transform cursor-zoom-in shadow-sm"
-                                    onClick={()=>setPreviewImage(item.product.image_url || '')}
-                                />
-                            ) : (
-                                <div className="w-14 h-14 rounded-2xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-300 dark:text-gray-500">
-                                    <Icons.Image size={24}/>
-                                </div>
-                            )}
-                        </div>
-
-                        <div className="flex justify-between items-center w-full md:w-auto md:flex-1 md:grid md:grid-cols-3 md:gap-4">
-                            <div className="md:col-span-1 flex items-center gap-4">
-                                {/* Mobile Image */}
-                                <div className="md:hidden img-preview">
-                                    {item.product.image_url ? (
-                                        <img 
-                                            src={item.product.image_url} 
-                                            className="w-12 h-12 rounded-xl object-cover bg-gray-100 border border-gray-200 shadow-sm"
-                                            onClick={()=>setPreviewImage(item.product.image_url || '')}
-                                        />
-                                    ) : (
-                                        <div className="w-12 h-12 rounded-xl bg-gray-100 dark:bg-gray-700 flex items-center justify-center text-gray-300"><Icons.Image size={20}/></div>
-                                    )}
-                                </div>
-                                <div>
-                                    <h3 className="font-bold text-lg leading-tight dark:text-white">{item.product.name}</h3>
-                                    <p className="text-xs opacity-60 md:hidden mt-1">SKU: {item.product.sku}</p>
-                                </div>
-                            </div>
-                            
-                            <div className="hidden md:block text-center text-sm font-medium opacity-60 dark:text-gray-300">
-                                {item.product.category || '-'} <span className="mx-2 opacity-30">|</span> {item.product.sku || '-'}
-                            </div>
-
-                            <div className="text-right md:col-span-1">
-                                <span className="font-black text-xl text-blue-600 dark:text-blue-400 tracking-tight">
-                                    {formatUnit(item.totalQuantity, item.product)}
-                                </span>
-                            </div>
-                        </div>
-                        
-                        <div className="hidden md:block ml-6">
-                            <Icons.ChevronDown className={`transition-transform duration-300 ${expanded.has(item.product.id)?'rotate-180':''}`}/>
-                        </div>
-                    </div>
-
-                    {expanded.has(item.product.id) && (
-                        <div className="bg-black/5 dark:bg-black/20 p-4 border-t border-black/5 space-y-3 animate-fade-in">
-                            {item.batches.map(b => (
-                                <div key={b.id} className="bg-white/80 dark:bg-gray-800/80 p-4 rounded-xl flex flex-col sm:flex-row justify-between items-center gap-3 shadow-sm border border-white/20">
-                                    <div className="flex-1 w-full sm:w-auto">
-                                        <div className="flex items-center gap-3 mb-1">
-                                            <span className="font-mono text-sm font-bold text-indigo-600 dark:text-indigo-300 bg-indigo-50 dark:bg-indigo-900/40 px-3 py-1 rounded-lg">
-                                                {b.batch_number}
-                                            </span>
-                                            {b.expiry_date && (
-                                                <span className="text-xs font-bold text-pink-600 dark:text-pink-300 bg-pink-50 dark:bg-pink-900/40 px-3 py-1 rounded-lg">
-                                                    Exp: {new Date(b.expiry_date).toLocaleDateString()}
-                                                </span>
-                                            )}
-                                        </div>
-                                        <div className="text-xs font-medium text-gray-400 pl-1">{b.store_name || '未知门店'}</div>
-                                    </div>
-                                    
-                                    <div className="flex items-center justify-between w-full sm:w-auto gap-6">
-                                        <div className="font-bold text-lg dark:text-white">{formatUnit(b.quantity, item.product)}</div>
-                                        {!isViewer && (
-                                            <div className="flex gap-2">
-                                                <button onClick={()=>setBillModal({batch:b, product:item.product})} className="px-4 py-2 bg-black text-white rounded-xl text-xs font-bold shadow-lg hover:scale-105 active:scale-95 transition-all">开单</button>
-                                                <button className="px-4 py-2 bg-white dark:bg-gray-700 border border-black/5 dark:border-white/10 rounded-xl text-xs font-bold hover:bg-gray-50 dark:hover:bg-gray-600 transition-colors">调整</button>
-                                            </div>
+        <>
+        {/* DESKTOP TABLE (Or Mobile Expanded View) */}
+        <div id="table-inventory" className={`bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden shadow-sm ${mobileExpanded ? 'block' : 'hidden md:block'}`}>
+             <table className="w-full text-left border-collapse table-fixed">
+                <thead className="bg-gray-100 dark:bg-gray-900 text-xs text-gray-600 dark:text-gray-400 uppercase font-semibold">
+                    <tr>
+                         {!isMobileOverlay && <th className="px-4 py-4 w-10"></th>}
+                         {deleteMode && !isMobileOverlay && (
+                             <th className="px-2 py-4 w-10 text-center"></th>
+                         )}
+                         <th className="px-4 py-4 truncate w-1/4">商品名称</th>
+                         <th className="px-4 py-4 truncate w-1/6">SKU/类别</th>
+                         <th className="px-4 py-4 truncate w-1/4">总库存 (大单位 小单位)</th>
+                         <th className="px-4 py-4 text-right truncate w-1/6">操作</th>
+                    </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                    {data.map((item: any) => {
+                        const isExpanded = mobileExpanded || expandedProducts.has(item.product.id);
+                        return (
+                            <React.Fragment key={item.product.id}>
+                                {!isMobileOverlay && (
+                                    <tr className="hover:bg-blue-50 dark:hover:bg-gray-700 cursor-pointer transition-colors" onClick={() => !mobileExpanded && toggleExpand(item.product.id)}>
+                                        <td className="px-4 py-4 text-center">
+                                            {!mobileExpanded && <Icons.ChevronRight size={16} className={`transform transition-transform ${isExpanded ? 'rotate-90' : ''}`} />}
+                                        </td>
+                                        {deleteMode && (
+                                            <td className="px-2 py-4 text-center" onClick={e=>e.stopPropagation()}>
+                                                <input type="checkbox" checked={selectedToDelete.has(item.product.id)} onChange={()=>toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id))} className="w-5 h-5 rounded cursor-pointer accent-blue-600 border-2 dark:border-white dark:bg-gray-700" />
+                                            </td>
                                         )}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
-                    )}
+                                        <td className="px-4 py-4 font-bold text-gray-800 dark:text-white truncate" title={item.product.name}>{item.product.name}</td>
+                                        <td className="px-4 py-4 text-gray-500 text-xs truncate">
+                                            <div>{ph(item.product.sku)}</div>
+                                            <div className="text-gray-400">{ph(item.product.category)}</div>
+                                        </td>
+                                        <td className="px-4 py-4 font-medium text-blue-700 dark:text-blue-400 truncate">{formatUnit(item.totalQuantity, item.product)}</td>
+                                        <td className="px-4 py-4 text-right" onClick={e=>e.stopPropagation()}>
+                                            <button onClick={()=>setEditProduct(item.product)} className="text-xs bg-gray-100 dark:bg-gray-700 px-3 py-1 rounded hover:bg-gray-200 dark:text-white">调整</button>
+                                        </td>
+                                    </tr>
+                                )}
+                                {isExpanded && (
+                                    <tr className="bg-gray-50/50 dark:bg-gray-900/50 animate-fade-in">
+                                        <td colSpan={deleteMode ? 6 : 5} className="p-0">
+                                            <div className="border-t border-b border-gray-200 dark:border-gray-700">
+                                                <div className="flex bg-gray-200 dark:bg-gray-800 p-2 text-xs font-bold text-gray-600 dark:text-gray-300">
+                                                    <div className="w-10 text-center">选</div>
+                                                    <div className="flex-1">批号</div>
+                                                    <div className="flex-1">门店</div>
+                                                    <div className="flex-1">数量({item.product.unit_name || '大'})</div>
+                                                    <div className="flex-1">数量({item.product.split_unit_name || '小'})</div>
+                                                    <div className="flex-1">有效期</div>
+                                                    <div className="w-20 text-right">操作</div>
+                                                </div>
+                                                {item.batches.map((batch: any) => {
+                                                    const split = getUnitSplit(batch.quantity, item.product);
+                                                    return (
+                                                        <div key={batch.id} className="flex items-center p-3 border-b dark:border-gray-800 last:border-0 hover:bg-white dark:hover:bg-gray-800 transition-colors text-sm">
+                                                            <div className="w-10 text-center">
+                                                                {deleteMode && <input type="checkbox" checked={selectedBatchIds.has(batch.id)} onChange={()=>toggleSelectBatch(batch.id)} className="w-4 h-4 accent-blue-600 dark:border-white" />}
+                                                            </div>
+                                                            <div className="flex-1 font-mono">
+                                                                <span className="text-purple-700 bg-purple-50 dark:bg-purple-900/30 dark:text-purple-300 px-1 rounded">{batch.batch_number}</span>
+                                                            </div>
+                                                            <div className="flex-1 text-gray-500 text-xs truncate font-bold text-blue-500">{batch.store_name || '-'}</div>
+                                                            <div className="flex-1 font-bold text-gray-800 dark:text-gray-200">{split.major}</div>
+                                                            <div className="flex-1 text-gray-500">{split.minor}</div>
+                                                            <div className="flex-1 text-xs">
+                                                                <span className="text-orange-600 bg-orange-50 dark:bg-orange-900/30 dark:text-orange-400 px-1 rounded">{batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}</span>
+                                                            </div>
+                                                            <div className="w-20 text-right flex justify-end gap-1">
+                                                                <button onClick={()=>setAdjustBatch(batch)} className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900 dark:text-blue-200">调</button>
+                                                                <button onClick={()=>setBillBatch(batch)} className="text-xs text-green-600 bg-green-50 px-2 py-1 rounded dark:bg-green-900 dark:text-green-200">单</button>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                })}
+                                                {item.batches.length === 0 && <div className="text-center text-gray-400 text-xs py-4">无批次</div>}
+                                            </div>
+                                        </td>
+                                    </tr>
+                                )}
+                            </React.Fragment>
+                        );
+                    })}
+                </tbody>
+             </table>
+        </div>
+
+        {!mobileExpanded && (
+            <div className="md:hidden space-y-3">
+                 {data.map((item: any) => (
+                     <div key={item.product.id} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700 flex justify-between items-center active:scale-[0.98] transition-transform" onClick={() => onMobileClick(item)}>
+                         <div className="flex items-center gap-3">
+                             {deleteMode && <input type="checkbox" checked={selectedToDelete.has(item.product.id)} onChange={(e)=>{e.stopPropagation(); toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id));}} className="w-5 h-5 rounded accent-blue-600 dark:bg-gray-700 dark:border-white" />}
+                             <div className="overflow-hidden">
+                                 <h3 className="font-bold text-gray-800 dark:text-white text-lg truncate">{item.product.name}</h3>
+                                 <p className="text-sm text-gray-500">{formatUnit(item.totalQuantity, item.product)}</p>
+                             </div>
+                         </div>
+                         <Icons.ChevronRight size={24} className="text-gray-400 flex-shrink-0" />
+                     </div>
+                 ))}
+            </div>
+        )}
+
+        {editProduct && <EditProductModal product={editProduct} onClose={()=>setEditProduct(null)} onSuccess={()=>{setEditProduct(null); onRefresh();}} />}
+        {adjustBatch && <AdjustBatchModal batch={adjustBatch} onClose={()=>setAdjustBatch(null)} onSuccess={()=>{setAdjustBatch(null); onRefresh();}} product={data.find((i:any)=>i.product.id===adjustBatch.product_id)?.product}/>}
+        {billBatch && <BillModal batch={billBatch} onClose={()=>setBillBatch(null)} onSuccess={()=>{setBillBatch(null); onRefresh();}} product={data.find((i:any)=>i.product.id===billBatch.product_id)?.product}/>}
+        </>
+    );
+};
+
+const EditProductModal = ({ product, onClose, onSuccess }: any) => {
+    const [form, setForm] = useState({ name: product.name, sku: product.sku, category: product.category, unit_name: product.unit_name, split_unit_name: product.split_unit_name, split_ratio: product.split_ratio });
+    const handleSave = async () => {
+        await dataService.updateProduct(product.id, form);
+        onSuccess();
+    };
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl space-y-4">
+                <h3 className="font-bold text-lg dark:text-white">调整商品信息 (不含库存)</h3>
+                <input className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="名称" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} />
+                <div className="grid grid-cols-2 gap-2">
+                    <input className="border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="SKU" value={form.sku} onChange={e=>setForm({...form, sku: e.target.value})} />
+                    <input className="border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="类别" value={form.category} onChange={e=>setForm({...form, category: e.target.value})} />
                 </div>
-            ))}
-            {billModal && <BillModal/>}
-            
-            {/* Image Preview Modal */}
-            {previewImage && createPortal(
-                <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-4 animate-fade-in backdrop-blur-md" onClick={()=>setPreviewImage(null)}>
-                    <img src={previewImage} className="max-w-full max-h-full rounded-3xl shadow-2xl animate-scale-in" />
-                    <button className="absolute top-6 right-6 p-4 bg-white/20 text-white rounded-full hover:bg-white/30 transition-colors"><Icons.Minus size={24}/></button>
-                </div>,
-                document.body
-            )}
+                <div className="grid grid-cols-3 gap-2">
+                    <input className="border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="大单位" value={form.unit_name} onChange={e=>setForm({...form, unit_name: e.target.value})} />
+                    <input className="border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="小单位" value={form.split_unit_name} onChange={e=>setForm({...form, split_unit_name: e.target.value})} />
+                    <input type="number" className="border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="换算" value={form.split_ratio} onChange={e=>setForm({...form, split_ratio: Number(e.target.value)})} />
+                </div>
+                <div className="flex justify-end gap-2 mt-4"><button onClick={onClose} className="px-4 py-2 text-gray-500">取消</button><button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded">保存</button></div>
+            </div>
         </div>
     );
 };
 
-export const Inventory: React.FC<{currentStore: string, isViewer?: boolean}> = ({ currentStore, isViewer }) => {
-    const [data, setData] = useState<AggregatedStock[]>([]);
-    const [products, setProducts] = useState<Product[]>([]);
-    const [mobileDetailItem, setMobileDetailItem] = useState<AggregatedStock | null>(null);
-    const [searchQuery, setSearchQuery] = useState('');
-    const [categoryFilter, setCategoryFilter] = useState('ALL');
+const AdjustBatchModal = ({ batch, product, onClose, onSuccess }: any) => {
+    const [form, setForm] = useState({ batch_number: batch.batch_number || '', expiry_date: batch.expiry_date ? batch.expiry_date.split('T')[0] : '', quantity: batch.quantity });
+    const handleSave = async () => {
+        await dataService.adjustBatch(batch.id, { ...form, expiry_date: form.expiry_date ? new Date(form.expiry_date).toISOString() : null, quantity: Number(form.quantity) });
+        onSuccess();
+    };
+    return (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl space-y-4">
+                <h3 className="font-bold text-lg dark:text-white">调整批次 ({batch.batch_number})</h3>
+                <input className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="批号" value={form.batch_number} onChange={e=>setForm({...form, batch_number: e.target.value})} />
+                <input type="date" className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white" value={form.expiry_date} onChange={e=>setForm({...form, expiry_date: e.target.value})} />
+                <div className="flex items-center gap-2"><label className="whitespace-nowrap dark:text-gray-300">当前总数:</label><input type="number" className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white" value={form.quantity} onChange={e=>setForm({...form, quantity: e.target.value})} /></div>
+                <div className="flex justify-end gap-2 mt-4"><button onClick={onClose} className="px-4 py-2 text-gray-500">取消</button><button onClick={handleSave} className="px-4 py-2 bg-blue-600 text-white rounded">保存</button></div>
+            </div>
+        </div>
+    );
+};
 
-    useEffect(() => { loadData(); }, [currentStore]);
+const BillModal = ({ batch, product, onClose, onSuccess }: any) => {
+    const [type, setType] = useState<'IN'|'OUT'>('OUT');
+    const [qty, setQty] = useState(1);
+    const [unitType, setUnitType] = useState<'WHOLE'|'SPLIT'>('WHOLE');
 
-    const loadData = async () => {
-        const [p, b] = await Promise.all([
-            dataService.getProducts(false, currentStore),
-            dataService.getBatches(currentStore==='all'?undefined:currentStore)
-        ]);
-        setProducts(p);
-        const map = new Map();
-        p.forEach(prod => map.set(prod.id, { product: prod, totalQuantity: 0, batches: [] }));
-        b.forEach(batch => {
-            if(map.has(batch.product_id)) {
-                const entry = map.get(batch.product_id);
-                entry.totalQuantity += batch.quantity;
-                entry.batches.push(batch);
-            }
-        });
-        setData(Array.from(map.values()));
+    const handleBill = async () => {
+        try {
+            const ratio = product.split_ratio || 1;
+            const actualQty = unitType === 'WHOLE' ? qty * ratio : qty;
+            await dataService.updateStock(product.id, batch.store_id, actualQty, type, `快速开单 (${unitType === 'WHOLE' ? '整' : '散'})`, batch.id);
+            onSuccess();
+        } catch(e:any) { alert(e.message); }
     };
 
-    const categories = useMemo(() => getUniqueCategories(products), [products]);
-    const filteredData = useMemo(() => {
-        return data.filter(item => {
-            if (categoryFilter !== 'ALL' && item.product.category !== categoryFilter) return false;
-            return matchProduct(item.product, searchQuery);
-        });
-    }, [data, searchQuery, categoryFilter]);
-
-    // ... (Keep existing Export listeners)
-
     return (
-        <div className="p-4 md:p-8 space-y-8 pb-24 max-w-7xl mx-auto">
-            <SmartSearch 
-                products={products}
-                categories={categories}
-                onSearch={setSearchQuery}
-                onCategoryChange={setCategoryFilter}
-            />
-            <InventoryTable 
-                data={filteredData} 
-                onRefresh={loadData} 
-                currentStore={currentStore} 
-                isViewer={isViewer}
-                onMobileClick={(item) => setMobileDetailItem(item)}
-            />
-            {mobileDetailItem && createPortal(
-                <div className="fixed inset-0 bg-gray-50 dark:bg-gray-900 z-[200] overflow-y-auto animate-slide-up flex flex-col">
-                    <div className="sticky top-0 bg-white/90 dark:bg-gray-800/90 backdrop-blur-md p-4 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between z-10">
-                        <div className="flex items-center gap-3">
-                            <button onClick={()=>setMobileDetailItem(null)} className="p-3 bg-gray-100 dark:bg-gray-700 rounded-full shadow hover:bg-gray-200 transition-colors">
-                                <Icons.ArrowRightLeft className="rotate-180" size={20}/>
-                            </button>
-                            <h2 className="text-xl font-black truncate max-w-[200px] dark:text-white">{mobileDetailItem.product.name}</h2>
-                        </div>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
+            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-sm shadow-2xl space-y-4 text-center">
+                <h3 className="font-bold text-lg dark:text-white">快速开单 ({product.name})</h3>
+                <div className="flex gap-2 justify-center p-1 bg-gray-100 dark:bg-gray-800 rounded">
+                    <button onClick={()=>setType('IN')} className={`flex-1 py-1 rounded ${type==='IN'?'bg-white shadow text-green-600':'text-gray-500'}`}>入库 (+)</button>
+                    <button onClick={()=>setType('OUT')} className={`flex-1 py-1 rounded ${type==='OUT'?'bg-white shadow text-red-600':'text-gray-500'}`}>出库 (-)</button>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-2 text-left">
+                    <div>
+                        <label className="text-xs text-gray-500">单位类型</label>
+                        <select 
+                            value={unitType} 
+                            onChange={e=>setUnitType(e.target.value as any)} 
+                            className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white text-sm"
+                        >
+                            <option value="WHOLE">整 ({product.unit_name})</option>
+                            <option value="SPLIT">散 ({product.split_unit_name || '件'})</option>
+                        </select>
                     </div>
-                    <div className="p-6 flex-1">
-                        {mobileDetailItem.product.image_url && (
-                            <img src={mobileDetailItem.product.image_url} className="w-full h-56 object-cover rounded-3xl mb-8 shadow-lg bg-white" />
-                        )}
-                        <div className="bg-white dark:bg-gray-800 p-8 rounded-3xl shadow-lg mb-8 border border-gray-100 dark:border-gray-700">
-                            <div className="text-center mb-6">
-                                <div className="text-sm font-bold text-gray-400 uppercase tracking-widest mb-2">总库存量</div>
-                                <div className="text-5xl font-black text-blue-600 dark:text-blue-400 tracking-tighter">
-                                    {formatUnit(mobileDetailItem.totalQuantity, mobileDetailItem.product)}
-                                </div>
-                            </div>
-                            <div className="grid grid-cols-2 gap-4 text-sm font-medium text-gray-600 dark:text-gray-300 bg-gray-50 dark:bg-gray-700/30 p-5 rounded-2xl">
-                                <div>分类: {mobileDetailItem.product.category || '-'}</div>
-                                <div>SKU: {mobileDetailItem.product.sku || '-'}</div>
-                                <div>单位: {mobileDetailItem.product.unit_name}</div>
-                                <div>拆零: 1{mobileDetailItem.product.unit_name}={mobileDetailItem.product.split_ratio}{mobileDetailItem.product.split_unit_name}</div>
-                            </div>
-                        </div>
-                        <h3 className="font-bold text-xl mb-4 pl-4 border-l-4 border-black dark:border-white dark:text-white">批次明细</h3>
-                        <InventoryTable 
-                            data={[mobileDetailItem]} 
-                            onRefresh={loadData} 
-                            currentStore={currentStore}
-                            isViewer={isViewer}
-                            mobileExpanded={true} 
-                            isMobileOverlay={true}
-                            compact={true}
-                        />
+                    <div>
+                        <label className="text-xs text-gray-500">数量</label>
+                        <input type="number" min="1" className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white text-lg font-bold text-center" value={qty} onChange={e=>setQty(Number(e.target.value))} />
                     </div>
-                </div>,
-                document.body
-            )}
+                </div>
+
+                <div className="text-xs text-gray-400">
+                    当前: {type === 'IN' ? '增加' : '减少'} {qty} {unitType === 'WHOLE' ? product.unit_name : (product.split_unit_name || '件')} 
+                    {unitType === 'WHOLE' && ` (约 ${qty * (product.split_ratio || 1)} 散)`}
+                </div>
+
+                <div className="flex justify-end gap-2 mt-4"><button onClick={onClose} className="flex-1 py-3 text-gray-500 bg-gray-100 rounded">取消</button><button onClick={handleBill} className="flex-1 py-3 bg-blue-600 text-white rounded font-bold">确认</button></div>
+            </div>
         </div>
     );
 };

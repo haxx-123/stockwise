@@ -1,138 +1,145 @@
 
-import { Product, OperationLog } from '../types';
+import { Product, RoleLevel } from '../types';
+
+export const DEFAULT_IMPORT_RATIO = 10;
+export const DEFAULT_SPLIT_UNIT = '条';
+
+export const ph = (value: any) => {
+  if (value === null || value === undefined || value === '') return '/';
+  return value;
+};
+
+// --- DATA SANITIZATION ---
+export const sanitizeStr = (val: any): string | null => {
+    if (val === null || val === undefined) return null;
+    const str = String(val).trim();
+    return str === '' ? null : str;
+};
+
+export const sanitizeInt = (val: any): number | null => {
+    if (val === null || val === undefined || val === '') return null;
+    const num = Number(val);
+    return isNaN(num) ? null : num;
+};
 
 export const formatUnit = (quantity: number, product: Product) => {
   if (quantity === undefined || quantity === null) return '/';
-  const unitName = product.unit_name || '整';
-  const splitUnitName = product.split_unit_name || '散';
-  const ratio = product.split_ratio || 1;
+  
+  const unitName = product.unit_name || '件';
+  const splitUnitName = product.split_unit_name || DEFAULT_SPLIT_UNIT;
+  
+  // Fallback if split info missing, treat as Big Unit only
+  if (!product.split_ratio) {
+    return `${quantity}${unitName} 0${splitUnitName}`;
+  }
+
+  const ratio = product.split_ratio;
   const major = Math.floor(quantity / ratio);
   const minor = quantity % ratio;
-  if (major === 0 && minor === 0) return "0";
-  if (major === 0) return `${minor}${splitUnitName}`;
-  if (minor === 0) return `${major}${unitName}`;
+
   return `${major}${unitName} ${minor}${splitUnitName}`;
 };
 
-// Field Translation Map
-const FIELD_MAP: Record<string, string> = {
-    quantity: '库存数量',
-    batch_number: '批次号',
-    expiry_date: '有效期',
-    store_id: '所属门店',
-    is_archived: '归档状态',
-    remark: '备注',
-    image_url: '图片',
-    created_at: '创建时间'
+export const getUnitSplit = (quantity: number, product: Product) => {
+    const ratio = product.split_ratio || 1;
+    const major = Math.floor(quantity / ratio);
+    const minor = quantity % ratio;
+    return { major, minor };
 };
 
-const TYPE_MAP: Record<string, string> = {
-    IN: '入库',
-    OUT: '出库',
-    ADJUST: '库存调整',
-    DELETE: '删除',
-    IMPORT: '导入',
-    RESTORE: '恢复'
+export const matchSearch = (text: string | null | undefined, query: string): boolean => {
+    if (!text) return false;
+    const cleanText = text.toLowerCase();
+    const cleanQuery = query.toLowerCase();
+    return cleanText.includes(cleanQuery); 
 };
 
-export const formatLogContent = (log: OperationLog) => {
-    // 1. Extract Data
-    const snapshot = log.snapshot_data || {};
-    const typeLabel = TYPE_MAP[log.action_type] || log.action_type;
+// --- COLORS ---
+export const getUserColor = (roleLevel: RoleLevel | undefined): string => {
+    if (roleLevel === undefined) return 'text-black font-bold';
+    const level = Number(roleLevel);
     
-    // Fallback Product Name: Logic to find name even if product deleted
-    // Prioritize snapshot name, then if we have a deleted_batch structure
-    let productName = snapshot.product_name;
-    let unit = snapshot.unit || '单位'; // Default unit
+    // Strict Color Coding Rules
+    // 00: Bright Purple (VIP)
+    if (level === 0) return 'text-purple-600 font-extrabold drop-shadow-[0_1px_1px_rgba(147,51,234,0.5)]'; 
+    // 01: Bright Gold (VIP)
+    if (level === 1) return 'text-yellow-500 font-extrabold drop-shadow-[0_1px_1px_rgba(234,179,8,0.5)]'; 
+    // 02: Bright Blue (VIP)
+    if (level === 2) return 'text-blue-600 font-extrabold drop-shadow-[0_1px_1px_rgba(37,99,235,0.5)]';   
     
-    if (!productName && snapshot.deleted_batch && snapshot.deleted_batch.product) {
-        productName = snapshot.deleted_batch.product.name;
+    // 03-05: Pale/Light distinct colors (NO Red, Purple, Gold)
+    if (level === 3) return 'text-emerald-400 font-medium opacity-80';  // Pale Green
+    if (level === 4) return 'text-cyan-400 font-medium opacity-80';     // Pale Cyan
+    if (level === 5) return 'text-slate-400 font-medium opacity-80';    // Pale Slate
+    
+    // 06+: Black
+    return 'text-black font-bold'; 
+};
+
+export const getLogColor = (type: string): string => {
+    switch (type) {
+        case 'IN': return 'text-emerald-600 bg-emerald-50';
+        case 'OUT': return 'text-rose-600 bg-rose-50';
+        case 'ADJUST': return 'text-blue-500 bg-blue-50';
+        case 'IMPORT': return 'text-purple-600 bg-purple-50';
+        case 'DELETE': return 'text-red-900 bg-red-100 font-bold';
+        case 'RESTORE': return 'text-amber-600 bg-amber-50';
+        default: return 'text-gray-600 bg-gray-50';
     }
-    if (!productName) productName = '未知商品';
+};
 
-    const absQty = Math.abs(log.change_delta);
+// Human Readable Page Summary (Optimized for non-tech users)
+export const generatePageSummary = (pageName: string, data: any) => {
+    let content = '';
+    const now = new Date().toLocaleString();
 
-    // --- CASE 1: IN/OUT (Standard Format) ---
-    // Req: "[Type]: [Product] x [Qty] [Unit]"
-    if (log.action_type === 'IN' || log.action_type === 'OUT' || log.action_type === 'IMPORT') {
-        const actionStr = log.action_type === 'IMPORT' ? '批量导入' : typeLabel;
-        return `${actionStr}：${productName} × ${absQty} ${unit}`;
-    }
-
-    // --- CASE 2: DELETE ---
-    // Req: Must show Name and Batch Number
-    if (log.action_type === 'DELETE') {
-        const b = snapshot.deleted_batch || {};
-        const batchNo = b.batch_number || '无批号';
-        return `删除：${productName} (批号: ${batchNo})`;
-    }
-
-    // --- CASE 3: ADJUST (Detailed diffs) ---
-    if (log.action_type === 'ADJUST') {
-        const changes: string[] = [];
-        const oldObj = snapshot.old || {};
-        const newObj = snapshot.new || {};
-
-        // Iterate keys in newObj to find diffs
-        Object.keys(newObj).forEach(key => {
-            const oldVal = oldObj[key];
-            const newVal = newObj[key];
-
-            // Ignore if both are null/undefined or equal
-            if (oldVal == newVal) return; // loose equality for string/number match
-            if (!oldVal && !newVal) return;
-
-            // Ignore technical fields
-            if (['id', 'product_id', 'created_at', 'updated_at', 'store_id'].includes(key)) return;
-
-            const fieldName = FIELD_MAP[key] || key;
+    if (pageName === 'inventory') {
+        content = (data as any[]).map((item, idx) => {
+            const productInfo = `【${idx + 1}】${item.product.name}`;
+            const stockInfo = `总库存: ${formatUnit(item.totalQuantity, item.product)}`;
             
-            // Format specific values
-            let displayOld = oldVal;
-            let displayNew = newVal;
-
-            if (key === 'expiry_date') {
-                displayOld = oldVal ? new Date(oldVal).toLocaleDateString() : '无';
-                displayNew = newVal ? new Date(newVal).toLocaleDateString() : '无';
-            }
-
-            changes.push(`将 ${fieldName} 从 "${displayOld || '空'}" 改为 "${displayNew || '空'}"`);
-        });
-
-        if (changes.length === 0) return `${typeLabel}：${productName} (无实质变更)`;
-        return `${typeLabel}：${productName}，${changes.join('；')}`;
-    }
-
-    // Fallback
-    return `${typeLabel}：${productName}`;
-};
-
-export const getLogColor = (type: string) => {
-    switch(type) {
-        case 'IN': 
-        case 'IMPORT': return 'bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200';
-        case 'OUT': return 'bg-red-100 text-red-800 dark:bg-red-900 dark:text-red-200';
-        case 'DELETE': return 'bg-gray-800 text-white dark:bg-gray-700';
-        case 'ADJUST': return 'bg-blue-100 text-blue-800 dark:bg-blue-900 dark:text-blue-200';
-        case 'RESTORE': return 'bg-purple-100 text-purple-800 dark:bg-purple-900 dark:text-purple-200';
-        default: return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
-    }
-};
-
-export const generatePageSummary = (page: string, data: any[]): string => {
-    if (page === 'inventory') {
-        return data.map((item: any) => {
-            const p = item.product;
-            const total = formatUnit(item.totalQuantity, p);
-            let details = `商品: ${p.name}\nSKU: ${p.sku || 'N/A'}\n总库存: ${total}\n`;
+            let batchInfo = '';
             if (item.batches && item.batches.length > 0) {
-                details += `批次详情:\n`;
-                item.batches.forEach((b: any) => {
-                    details += `- 批号: ${b.batch_number || '无'} | 数量: ${b.quantity} | 有效期: ${b.expiry_date ? new Date(b.expiry_date).toLocaleDateString() : '无'}\n`;
-                });
+                batchInfo = item.batches.map((b: any) => {
+                    const expiry = b.expiry_date ? b.expiry_date.split('T')[0] : '无有效期';
+                    return `   • 批号: ${b.batch_number} | 门店: ${b.store_name||'-'} | 数量: ${formatUnit(b.quantity, item.product)} | 有效期: ${expiry}`;
+                }).join('\n');
+            } else {
+                batchInfo = '   (无批次信息)';
             }
-            return details;
-        }).join('\n-----------------------------------\n');
+            
+            return `${productInfo}\n${stockInfo}\n${batchInfo}`;
+        }).join('\n\n------------------------\n\n');
+
+    } else if (pageName === 'logs') {
+        content = (data as any[]).map((log, idx) => {
+            const typeMap: Record<string, string> = { 'IN': '入库', 'OUT': '出库', 'DELETE': '删除', 'ADJUST': '调整', 'IMPORT': '导入' };
+            const opName = typeMap[log.type] || log.type;
+            const qtySign = (log.type === 'OUT' || log.type === 'DELETE') ? '-' : '+';
+            const prodName = log.product?.name || '未知商品';
+            
+            return `${idx + 1}. [${opName}] ${prodName}\n   变动: ${qtySign}${log.quantity}\n   操作人: ${log.operator || '系统'}\n   时间: ${new Date(log.timestamp).toLocaleString()}\n   备注: ${log.note || '无'}`;
+        }).join('\n\n');
+
+    } else if (pageName === 'audit') {
+        content = (data as any[]).map((log, idx) => {
+            const opMap: Record<string, string> = { 'INSERT': '新增', 'UPDATE': '修改', 'DELETE': '删除' };
+            const opName = opMap[log.operation] || log.operation;
+            
+            const formatData = (obj: any) => {
+                if(!obj) return '无';
+                return Object.entries(obj).map(([k,v]) => `${k}: ${v}`).join(', ');
+            };
+
+            const details = log.operation === 'UPDATE' 
+                ? `旧值: { ${formatData(log.old_data)} }\n   新值: { ${formatData(log.new_data)} }`
+                : `数据: { ${formatData(log.new_data || log.old_data)} }`;
+
+            return `${idx + 1}. [${opName}] 对象表: ${log.table_name}\n   ID: ${log.id} | 时间: ${new Date(log.timestamp).toLocaleString()}\n   ${details}`;
+        }).join('\n\n');
+    } else {
+        content = "此页面不支持导出文字。";
     }
-    return '';
+
+    return `StockWise 报表导出\n页面: ${pageName === 'inventory' ? '库存清单' : pageName === 'logs' ? '操作日志' : '审计大厅'}\n导出时间: ${now}\n\n${content}`;
 };

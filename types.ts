@@ -3,12 +3,8 @@ export type Store = {
   id: string;
   name: string;
   location?: string;
-  image_url?: string; 
-  parent_id?: string | null; 
-  managers?: string[]; // User IDs
-  viewers?: string[]; // User IDs
-  is_archived?: boolean; 
-  children?: Store[]; // Virtual field for UI hierarchy
+  is_archived?: boolean; // Soft Delete
+  created_at?: string;
 };
 
 export type Product = {
@@ -16,15 +12,21 @@ export type Product = {
   name: string;
   sku?: string | null;
   category?: string | null;
-  unit_name?: string | null; // "整"
-  split_unit_name?: string | null; // "散"
-  split_ratio?: number | null;     
+  
+  // Split Sales Logic
+  unit_name?: string | null;       // Big Unit (e.g., Box)
+  split_unit_name?: string | null; // Small Unit (e.g., Piece)
+  split_ratio?: number | null;     // How many small in big
+  
   min_stock_level?: number | null; 
   image_url?: string | null;
-  remark?: string | null;
   pinyin?: string | null; 
-  is_archived?: boolean; 
+  
+  // Strict Isolation (Optional)
   bound_store_id?: string | null; 
+  
+  is_archived?: boolean; 
+  created_at?: string;
 };
 
 export type Batch = {
@@ -32,38 +34,35 @@ export type Batch = {
   product_id: string;
   store_id: string;
   batch_number?: string | null;
-  quantity: number; // Smallest unit
+  quantity: number;        
   expiry_date?: string | null;     
-  created_at: string;
   is_archived?: boolean; 
-  store_name?: string;
-  image_url?: string | null;
-  remark?: string | null; 
+  created_at: string;
+  
+  // Joined fields
+  store_name?: string; 
 };
 
-export type OperationType = 'IN' | 'OUT' | 'ADJUST' | 'DELETE' | 'IMPORT' | 'RESTORE';
+export type TransactionType = 'IN' | 'OUT' | 'TRANSFER' | 'ADJUST' | 'IMPORT' | 'DELETE' | 'RESTORE';
 
-// New Atomic Log Table
-export type OperationLog = {
-    id: string;
-    action_type: OperationType;
-    target_id: string; // Batch ID or Product ID
-    change_delta: number;
-    snapshot_data: any; // JSON Snapshot
-    operator_id: string; // Username
-    created_at: string;
-    is_revoked: boolean;
+export type Transaction = {
+  id: string;
+  type: TransactionType;
+  product_id?: string;
+  store_id?: string;
+  batch_id?: string;
+  quantity: number; 
+  balance_after?: number; 
+  timestamp: string;
+  note?: string;
+  operator?: string; 
+  snapshot_data?: any; 
+  is_undone?: boolean; 
+  
+  // Joined fields
+  product?: { name: string };
+  store?: { name: string };
 };
-
-export type LogFilter = {
-    type: string;
-    operator: string;
-    startDate: string;
-    endDate: string;
-};
-
-// Legacy Transaction (Keep for charts if needed, but Log is primary now)
-export type Transaction = OperationLog; 
 
 export type AuditLog = {
   id: number;
@@ -73,69 +72,70 @@ export type AuditLog = {
   old_data: any;
   new_data: any;
   timestamp: string;
+  operator?: string;
 };
 
+// 0-9: Lower is higher power. 00 is Admin.
 export type RoleLevel = 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9;
 
+// Interface for permissions, used for UI and backward compatibility
 export interface UserPermissions {
     role_level: RoleLevel;
     logs_level: 'A' | 'B' | 'C' | 'D';
     announcement_rule: 'PUBLISH' | 'VIEW';
     store_scope: 'GLOBAL' | 'LIMITED';
-    
     show_excel: boolean;
     view_peers: boolean;
     view_self_in_list: boolean;
-    
     hide_perm_page: boolean;
     hide_audit_hall: boolean;
     hide_store_management: boolean;
-    hide_new_store_btn: boolean;
-    hide_excel_export_btn: boolean;
-    hide_store_edit_btn: boolean;
-
     only_view_config: boolean;
 }
+
+export type RolePermissionRule = UserPermissions;
 
 export type User = {
   id: string;
   username: string;
   password?: string; 
   role_level: RoleLevel; 
-  permissions: UserPermissions;
-  allowed_store_ids: string[]; 
+  
+  // Flattened Permissions (Direct DB Columns)
+  logs_level?: 'A' | 'B' | 'C' | 'D';
+  announcement_rule?: 'PUBLISH' | 'VIEW';
+  store_scope?: 'GLOBAL' | 'LIMITED';
+  show_excel?: boolean;
+  view_peers?: boolean;
+  view_self_in_list?: boolean;
+  hide_perm_page?: boolean;
+  hide_audit_hall?: boolean;
+  hide_store_management?: boolean;
+  only_view_config?: boolean;
+
+  permissions: UserPermissions; // Constructed at runtime from above fields
+  
+  allowed_store_ids: string[]; // For LIMITED scope
   is_archived?: boolean; 
-  face_descriptor?: string; 
-  device_history?: {
-      device_name: string;
-      last_login: string;
-      ip?: string;
-  }[];
+  face_descriptor?: string | null; 
+  created_at?: string;
 };
 
 export type Announcement = {
   id: string;
-  type: 'ANNOUNCEMENT' | 'SUGGESTION'; // Differentiate normal vs suggestion
   title: string;
-  content: string; // HTML Content
-  creator: string; // Username
+  content: string; 
+  creator: string;
   creator_id?: string;
-  creator_role?: RoleLevel; // NEW: Store role level to optimize popup logic for 00 admins
-  
-  target_users: string[]; // User IDs allowed to see this. For Suggestion, it's ['admin_00']
-  
+  target_users: string[]; 
+  valid_until: string;
   popup_config: {
       enabled: boolean;
-      frequency: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'FOREVER';
+      duration: 'ONCE' | 'DAY' | 'WEEK' | 'MONTH' | 'YEAR' | 'FOREVER';
   };
-  
-  allow_hide: boolean; // Can user hide it from their list?
-  
-  is_force_deleted?: boolean; // Physical soft delete (Revoked)
-  
-  read_by?: string[]; // User IDs who opened details
-  hidden_by?: string[]; // User IDs who hid this from "My Announcements"
-  
+  allow_delete: boolean; 
+  is_force_deleted?: boolean; 
+  read_by?: string[]; 
   created_at: string;
 };
 

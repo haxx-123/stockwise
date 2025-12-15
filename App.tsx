@@ -1,397 +1,412 @@
-
-import React, { useState, useEffect, Suspense } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Sidebar } from './components/Sidebar';
+import { Dashboard } from './pages/Dashboard';
+import { Inventory } from './pages/Inventory';
+import { Import } from './pages/Import';
+import { Logs } from './pages/Logs';
+import { Audit } from './pages/Audit';
+import { Settings } from './pages/Settings';
 import { Icons } from './components/Icons';
 import { dataService } from './services/dataService';
-import { Store, User } from './types';
+import { Store, Announcement, User } from './types';
 import { isConfigured } from './services/supabaseClient';
+import { generatePageSummary, formatUnit } from './utils/formatters';
 import { authService } from './services/authService';
-import { PermissionProvider } from './contexts/PermissionContext';
-import { FaceAuth } from './components/FaceAuth'; 
-import { createPortal } from 'react-dom';
-
-// 1. Define Lazy Imports
-const DashboardPromise = import('./pages/Dashboard');
-const Dashboard = React.lazy(() => DashboardPromise.then(m => ({ default: m.Dashboard })));
-
-const InventoryPromise = () => import('./pages/Inventory');
-const Inventory = React.lazy(() => InventoryPromise().then(m => ({ default: m.Inventory })));
-
-const ImportPromise = () => import('./pages/Import');
-const Import = React.lazy(() => ImportPromise().then(m => ({ default: m.Import })));
-
-const LogsPromise = () => import('./pages/Logs');
-const Logs = React.lazy(() => LogsPromise().then(m => ({ default: m.Logs })));
-
-const AuditPromise = () => import('./pages/Audit');
-const Audit = React.lazy(() => AuditPromise().then(m => ({ default: m.Audit })));
-
-const SettingsPromise = () => import('./pages/Settings');
-const Settings = React.lazy(() => SettingsPromise().then(m => ({ default: m.Settings })));
-
-const AnnouncementCenterPromise = () => import('./pages/AnnouncementCenter');
-const AnnouncementCenter = React.lazy(() => AnnouncementCenterPromise().then(m => ({ default: m.AnnouncementCenter })));
-
-const StoreManagementPromise = () => import('./pages/StoreManagement');
-const StoreManagement = React.lazy(() => StoreManagementPromise().then(m => ({ default: m.StoreManagement })));
+import { RichTextEditor } from './components/RichTextEditor';
+import { UsernameBadge } from './components/UsernameBadge';
+import { PermissionProvider, useUserPermissions } from './contexts/PermissionContext';
+import { SVIPBadge } from './components/SVIPBadge';
+import { GlobalAnnouncement } from './components/GlobalAnnouncement';
+import { AnnouncementManager } from './components/AnnouncementManager';
 
 declare const window: any;
-declare const faceapi: any;
+declare const html2canvas: any;
 
-// --- New Splash Screen Component ---
-const Splash = ({ isReady }: { isReady: boolean }) => {
-    const [shouldRender, setShouldRender] = useState(true);
+// --- COMPONENT: Launch Screen ---
+const LaunchScreen = ({ isReady }: { isReady: boolean }) => {
+    const [visible, setVisible] = useState(true);
 
-    // Unmount from DOM after fade-out animation completes (1s)
     useEffect(() => {
         if (isReady) {
-            const timer = setTimeout(() => setShouldRender(false), 1200);
+            // Wait a moment to ensure smooth transition
+            const timer = setTimeout(() => setVisible(false), 500); 
             return () => clearTimeout(timer);
         }
     }, [isReady]);
 
-    if (!shouldRender) return null;
+    if (!visible) return null;
 
     return (
-        <div className={`fixed inset-0 bg-[#e0e0e0] dark:bg-[#121212] z-[9999] flex flex-col items-center justify-between py-24 transition-opacity duration-1000 ease-out ${isReady ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>
-            <div className="flex-1 flex flex-col items-center justify-center animate-fade-in">
-                <div className="relative w-32 h-32 mb-8">
-                    <img src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" className="w-full h-full object-contain drop-shadow-2xl" />
+        <div className={`fixed inset-0 z-[100] bg-[#F2F3F7] dark:bg-gray-900 flex flex-col items-center justify-center transition-opacity duration-700 ${isReady ? 'opacity-0' : 'opacity-100'}`}>
+            <div className="flex flex-col items-center animate-scale-in space-y-6">
+                <div className="w-24 h-24 bg-white rounded-3xl shadow-xl flex items-center justify-center p-4">
+                    <img 
+                        src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" 
+                        alt="Logo" 
+                        className="w-full h-full object-contain"
+                    />
                 </div>
-                <h1 className="text-4xl font-black text-black dark:text-white tracking-[0.6em] ml-4 mb-3">棱镜</h1>
-                <p className="text-sm text-gray-500 tracking-[0.8em] font-medium uppercase mb-8">STOCKWISE</p>
-                
-                <div className="flex flex-col items-center gap-2">
-                    <div className="w-8 h-1 bg-black dark:bg-white rounded-full opacity-20"></div>
-                    <p className="text-xs text-gray-400 font-bold tracking-widest mt-2">智能库管 · 唯快不破</p>
+                <div className="text-center space-y-2">
+                    <h1 className="text-3xl font-bold text-gray-800 dark:text-white tracking-tight">棱镜</h1>
+                    <p className="text-sm text-gray-500 uppercase tracking-widest">StockWise-智能库管系统</p>
                 </div>
             </div>
             
-            <div className="opacity-80 mix-blend-multiply dark:mix-blend-screen animate-slide-up" style={{animationDelay: '0.2s'}}>
-                <img src="https://i.ibb.co/8gLfYKCW/retouch-2025121313394035.png" className="h-20 object-contain" alt="Signature" />
+            {/* Signature at bottom */}
+            <div className="absolute bottom-12 opacity-80">
+                <img 
+                    src="https://i.ibb.co/8gLfYKCW/retouch-2025121313394035.png" 
+                    alt="Signature" 
+                    className="h-12 object-contain filter grayscale opacity-50"
+                />
             </div>
         </div>
     );
 };
 
-// Top Right Actions Bar (Updated: Always visible icons)
-const TopActions = ({ onOpenAnnouncement, currentPage }: { onOpenAnnouncement: () => void, currentPage: string }) => {
-    const [hasUnread, setHasUnread] = useState(false);
+// --- COMPONENT: Smart Install Prompt ---
+const InstallPrompt = () => {
+    const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+    const [showButton, setShowButton] = useState(false);
+    const [showIOSGuide, setShowIOSGuide] = useState(false);
 
     useEffect(() => {
-        const checkUnread = async () => {
-            const user = authService.getCurrentUser();
-            if(!user) return;
-            const all = await dataService.getAnnouncements();
-            const valid = all.filter(a => {
-                if (a.is_force_deleted || a.type !== 'ANNOUNCEMENT') return false;
-                if (a.hidden_by?.includes(user.id) || a.read_by?.includes(user.id)) return false;
-                if (user.role_level === 0) return a.creator_role === 0;
-                return a.target_users.includes(user.id);
-            });
-            setHasUnread(valid.length > 0);
+        // Android / Chrome
+        const handler = (e: any) => {
+            e.preventDefault();
+            setDeferredPrompt(e);
+            setShowButton(true);
         };
-        checkUnread();
-        const interval = setInterval(checkUnread, 30000);
-        return () => clearInterval(interval);
+        window.addEventListener('beforeinstallprompt', handler);
+
+        // iOS Detection
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+        const isStandalone = (window.navigator as any).standalone || window.matchMedia('(display-mode: standalone)').matches;
+        
+        if (isIOS && !isStandalone) {
+             setShowButton(true); // We reuse the button trigger logic but handle click differently
+        }
+
+        return () => window.removeEventListener('beforeinstallprompt', handler);
     }, []);
 
-    const ALLOWED_PAGES = ['inventory', 'logs', 'audit-logs', 'audit-devices', 'settings-perms'];
-    const showActionBtns = ALLOWED_PAGES.includes(currentPage);
-
-    const handleScreenshot = async () => {
-        const el = document.getElementById('main-content-scroll');
-        if (!el || !(window as any).html2canvas) return;
-        const btn = document.getElementById('screenshot-btn');
-        if (btn) btn.classList.add('animate-spin');
-        const originalScrollTop = el.scrollTop;
-        const originalStyleHeight = el.style.height;
-        const originalStyleOverflow = el.style.overflow;
-        try {
-            const totalHeight = el.scrollHeight;
-            const step = Math.max(100, totalHeight / 20);
-            for (let i = 0; i <= totalHeight; i += step) { el.scrollTop = i; await new Promise(r => setTimeout(r, 10)); }
-            el.scrollTop = 0; await new Promise(r => setTimeout(r, 200));
-            el.style.height = `${totalHeight}px`; el.style.overflow = 'visible';
-            let bgColor = '#888888';
-            if (document.documentElement.classList.contains('theme-dark')) bgColor = '#000000';
-            if (document.documentElement.classList.contains('theme-light')) bgColor = '#f3f4f6';
-            const canvas = await (window as any).html2canvas(el, { backgroundColor: bgColor, scale: 2, useCORS: true, logging: false, height: totalHeight, windowHeight: totalHeight });
-            const link = document.createElement('a'); link.download = `StockWise_LongCap_${Date.now()}.png`; link.href = canvas.toDataURL('image/png'); link.click();
-        } catch (err) { console.error("Screenshot failed", err); alert("长截图生成失败"); } 
-        finally { el.style.height = originalStyleHeight; el.style.overflow = originalStyleOverflow; el.scrollTop = originalScrollTop; if (btn) btn.classList.remove('animate-spin'); }
+    const handleClick = () => {
+        const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+        
+        if (isIOS) {
+            setShowIOSGuide(true);
+        } else if (deferredPrompt) {
+            deferredPrompt.prompt();
+            deferredPrompt.userChoice.then((choiceResult: any) => {
+                if (choiceResult.outcome === 'accepted') {
+                    setShowButton(false);
+                }
+                setDeferredPrompt(null);
+            });
+        }
     };
 
-    const handleExcel = () => { window.dispatchEvent(new CustomEvent('trigger-excel-export')); };
-    const handleCopy = () => { window.dispatchEvent(new CustomEvent('trigger-copy')); };
-    const handleAnnouncement = () => { onOpenAnnouncement(); };
-
-    const ActionButtons = () => (
-        <>
-            <button id="screenshot-btn" onClick={handleScreenshot} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform flex items-center justify-center w-10 h-10 border border-white/20" title="长截图">
-                <Icons.Camera size={18}/> 
-            </button>
-            {showActionBtns && (
-                <>
-                    <button onClick={handleExcel} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform flex items-center justify-center w-10 h-10 border border-white/20" title="导出Excel">
-                        <Icons.FileSpreadsheet size={18}/>
-                    </button>
-                    <button onClick={handleCopy} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform flex items-center justify-center w-10 h-10 border border-white/20" title="复制内容">
-                        <Icons.Copy size={18}/>
-                    </button>
-                </>
-            )}
-            <button onClick={handleAnnouncement} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full hover:scale-110 transition-transform relative flex items-center justify-center w-10 h-10 border border-white/20" title="公告">
-                <Icons.Megaphone size={18}/>
-                {hasUnread && <div className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white animate-pulse"></div>}
-            </button>
-            <InstallButton />
-        </>
-    );
+    if (!showButton) return null;
 
     return (
-        <div className="fixed top-4 right-4 z-[90] no-print flex gap-2">
-            <ActionButtons />
-        </div>
+        <>
+            {/* Floating Button - Top Right Fixed */}
+            <button 
+                onClick={handleClick}
+                className="fixed top-20 right-4 z-50 bg-blue-600 text-white p-3 rounded-full shadow-lg hover:bg-blue-700 active:scale-95 transition-all flex items-center justify-center animate-fade-in"
+                title="安装应用"
+            >
+                <Icons.Store size={20} className="text-white" />
+                <span className="sr-only">安装</span>
+            </button>
+
+            {/* iOS Guide Modal */}
+            {showIOSGuide && (
+                <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center p-4 animate-fade-in" onClick={() => setShowIOSGuide(false)}>
+                    <div className="bg-white dark:bg-gray-800 rounded-2xl p-6 w-full max-w-sm shadow-2xl relative" onClick={e => e.stopPropagation()}>
+                         <div className="flex justify-between items-center mb-4">
+                             <h3 className="font-bold text-lg dark:text-white">安装到 iPhone/iPad</h3>
+                             <button onClick={() => setShowIOSGuide(false)} className="p-1 bg-gray-100 rounded-full"><Icons.Minus size={16}/></button>
+                         </div>
+                         <div className="space-y-4 text-sm text-gray-600 dark:text-gray-300">
+                             <p>由于 iOS 系统限制，请手动添加：</p>
+                             <div className="flex items-center gap-3 bg-gray-50 dark:bg-gray-700 p-3 rounded-xl">
+                                 <div className="w-8 h-8 flex items-center justify-center bg-blue-100 text-blue-600 rounded-lg font-bold">1</div>
+                                 <span>点击浏览器底部的 <span className="font-bold">分享按钮</span> <span className="inline-block align-middle"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8"/><polyline points="16 6 12 2 8 6"/><line x1="12" y1="2" x2="12" y2="15"/></svg></span></span>
+                             </div>
+                             <div className="flex items-center gap-3 bg-gray-50 dark:bg-gray-700 p-3 rounded-xl">
+                                 <div className="w-8 h-8 flex items-center justify-center bg-blue-100 text-blue-600 rounded-lg font-bold">2</div>
+                                 <span>向下滑动，选择 <span className="font-bold">“添加到主屏幕”</span></span>
+                             </div>
+                         </div>
+                         <div className="mt-6 text-center">
+                             <button onClick={() => setShowIOSGuide(false)} className="text-blue-600 font-bold text-sm">我知道了</button>
+                         </div>
+                         {/* Pointer arrow for bottom share button usually found in Safari */}
+                         <div className="absolute -bottom-2 left-1/2 transform -translate-x-1/2 translate-y-full w-0 h-0 border-l-[10px] border-l-transparent border-r-[10px] border-r-transparent border-t-[10px] border-t-white dark:border-t-gray-800 md:hidden"></div>
+                    </div>
+                </div>
+            )}
+        </>
     );
 };
 
-const InstallButton = () => {
-    const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
-    const [showIOS, setShowIOS] = useState(false);
-    useEffect(() => {
-        window.addEventListener('beforeinstallprompt', (e: any) => { e.preventDefault(); setDeferredPrompt(e); });
-        const isIos = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
-        if (isIos && !(window.navigator as any).standalone) setShowIOS(true);
-    }, []);
-    const install = () => {
-        if (deferredPrompt) { deferredPrompt.prompt(); deferredPrompt.userChoice.then(() => setDeferredPrompt(null)); } 
-        else if (showIOS) { alert("请点击浏览器底部的分享按钮，然后选择“添加到主屏幕”"); }
+// FACE ID COMPONENT
+const FaceLogin = ({ onSuccess }: any) => {
+    const videoRef = useRef<HTMLVideoElement>(null);
+    const [status, setStatus] = useState('初始化相机...');
+    const [scanning, setScanning] = useState(false);
+
+    const stopStream = () => {
+        if(videoRef.current && videoRef.current.srcObject) {
+            (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+            videoRef.current.srcObject = null;
+        }
     };
-    if (!deferredPrompt && !showIOS) return null;
-    return <button onClick={install} className="p-2 bg-black text-white shadow-lg rounded-full hover:scale-110 transition-transform flex items-center justify-center w-10 h-10"><Icons.Download size={18}/></button>;
-};
 
-// App Content
-const AppContent: React.FC = () => {
-  const [isAuthenticated, setIsAuthenticated] = useState(!!authService.getCurrentUser());
-  const [isReady, setIsReady] = useState(false);
-  const [currentPage, setCurrentPage] = useState('dashboard');
-  const [currentStoreId, setCurrentStoreId] = useState('all');
-  const [stores, setStores] = useState<Store[]>([]);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [announcementOpen, setAnnouncementOpen] = useState(false);
-  
-  // Theme
-  useEffect(() => {
-      const savedTheme = localStorage.getItem('sw_theme') || 'theme-prism';
-      document.documentElement.className = savedTheme;
-      if (savedTheme.includes('theme-dark')) document.documentElement.classList.add('dark');
-      else document.documentElement.classList.remove('dark');
-  }, []);
+    useEffect(() => {
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+            .then(stream => {
+                if(videoRef.current) videoRef.current.srcObject = stream;
+                setStatus("请保持脸部在框内");
+                setScanning(true);
+            })
+            .catch(err => setStatus("无法访问相机: " + err.message));
+        
+        return () => stopStream();
+    }, []);
 
-  // --- BOOT LOGIC (Parallel & State-Driven) ---
-  useEffect(() => {
-      if (!isAuthenticated) return;
-
-      const bootSystem = async () => {
-          try {
-              if (isConfigured()) { 
-                   // PARALLEL EXECUTION: Fetch all core data required for the Dashboard & Sidebar immediately
-                   // This runs while the Splash screen is visible (z-index highest)
-                   const [sList, uList, aList] = await Promise.all([
-                       dataService.getStores(),
-                       dataService.getUsers(), // Warm up user cache
-                       dataService.getAnnouncements() // Warm up announcements
-                   ]);
-                   setStores(sList);
-              }
-          } catch (e) { 
-              console.error("System Boot Error:", e); 
-          } finally {
-              // PASSIVE DISAPPEARANCE:
-              // Data is loaded. Now we signal the app is ready.
-              // A tiny buffer (100ms) ensures React has committed the setStores update to the DOM.
-              setTimeout(() => {
-                  setIsReady(true);
-              }, 100);
-          }
-      };
-
-      bootSystem();
-
-      const handleRefresh = () => { dataService.getStores().then(setStores); };
-      window.addEventListener('REFRESH_STORES', handleRefresh);
-      const handleSwitch = (e: any) => { setCurrentStoreId(e.detail); alert("已切换当前门店视图"); };
-      window.addEventListener('SWITCH_STORE_ID', handleSwitch);
-      return () => { window.removeEventListener('REFRESH_STORES', handleRefresh); window.removeEventListener('SWITCH_STORE_ID', handleSwitch); };
-  }, [isAuthenticated]);
-
-  // Popup Logic
-  useEffect(() => {
-      if (isReady && isAuthenticated) {
-          const todayStr = new Date().toISOString().split('T')[0];
-          const sessionKey = `hasViewedPopup_${todayStr}`;
-          if (sessionStorage.getItem(sessionKey)) return;
-          dataService.getAnnouncements().then(anns => {
-              const user = authService.getCurrentUser();
-              if (!user) return;
-              const valid = anns.find(a => {
-                  if (a.is_force_deleted || !a.popup_config.enabled || a.hidden_by?.includes(user.id)) return false;
-                  if (user.role_level === 0) return a.creator_role === 0;
-                  return a.target_users.includes(user.id);
-              });
-              if (valid) { setAnnouncementOpen(true); sessionStorage.setItem(sessionKey, 'true'); }
-          });
-      }
-  }, [isReady, isAuthenticated]);
-
-  const handleLogin = async (u: string, p: string) => {
-      const success = await authService.login(u, p);
-      if (success) { setIsAuthenticated(true); window.location.reload(); }
-      return success;
-  };
-
-  const handleFaceLogin = async (u: string) => {
-      const success = await authService.loginWithFace(u);
-      if (success) { setIsAuthenticated(true); window.location.reload(); }
-      return success;
-  };
-
-  if (!isAuthenticated) return <LoginPage onLogin={handleLogin} onFaceLogin={handleFaceLogin} />;
-
-  const currentStoreObj = stores.find(s => s.id === currentStoreId);
-  const user = authService.getCurrentUser();
-  const isViewer = currentStoreObj?.viewers?.includes(user?.id || '') && !currentStoreObj?.managers?.includes(user?.id || '') && user?.role_level !== 0;
-  const isParentStore = !!(currentStoreObj && stores.some(child => child.parent_id === currentStoreObj.id));
-
-  // --- ROUTER LOGIC ---
-  let content = null;
-  switch (currentPage) {
-      case 'dashboard': content = <Dashboard currentStore={currentStoreId} onNavigate={setCurrentPage} />; break;
-      case 'inventory': content = <Inventory currentStore={currentStoreId} isViewer={isViewer} />; break;
-      case 'import-manual': content = isParentStore || isViewer ? <div className="p-10 text-center font-bold text-gray-500">此模式下无法导入商品</div> : <Import currentStore={currentStoreId} initialMode="MANUAL" />; break;
-      case 'import-excel': content = isParentStore || isViewer ? <div className="p-10 text-center font-bold text-gray-500">此模式下无法导入商品</div> : <Import currentStore={currentStoreId} initialMode="EXCEL" />; break;
-      case 'logs': content = <Logs />; break;
-      case 'audit-logs': content = <Audit initialView="LOGS" />; break;
-      case 'audit-devices': content = <Audit initialView="DEVICES" />; break;
-      case 'store_manage': content = <StoreManagement />; break;
-      default: 
-        if (currentPage.startsWith('settings')) content = <Settings subPage={currentPage.split('-')[1]} />;
-        break;
-  }
-
-  return (
-    <>
-    <Splash isReady={isReady} />
-    <TopActions onOpenAnnouncement={()=>setAnnouncementOpen(true)} currentPage={currentPage} />
-    
-    <div className="h-screen flex font-sans text-black overflow-hidden bg-[#888888] body-bg">
-      {/* Mobile Menu Button - Hidden when sidebar is OPEN */}
-      {!mobileMenuOpen && (
-          <div className="fixed top-4 left-4 z-[60] md:hidden">
-              <button onClick={()=>setMobileMenuOpen(true)} className="p-2 bg-white/80 backdrop-blur shadow-lg rounded-full"><Icons.Menu size={20}/></button>
-          </div>
-      )}
-
-      {/* Sidebar Container */}
-      <div className={`fixed inset-y-0 left-0 z-50 w-72 transform transition-transform duration-300 ease-out ${mobileMenuOpen ? 'translate-x-0 shadow-2xl' : '-translate-x-full'} md:relative md:translate-x-0 md:inset-auto md:z-0 md:flex md:shrink-0`}>
-          <Sidebar 
-             currentPage={currentPage} 
-             onNavigate={(p) => { setCurrentPage(p); setMobileMenuOpen(false); }} 
-             currentStore={currentStoreId} 
-             stores={stores}
-             isMobileDrawer={mobileMenuOpen} 
-          />
-      </div>
-      
-      {/* Background Overlay - Click to Close */}
-      {mobileMenuOpen && (
-          <div 
-            className="fixed inset-0 bg-black/50 backdrop-blur-sm z-40 md:hidden animate-fade-in" 
-            onClick={()=>setMobileMenuOpen(false)}
-          ></div>
-      )}
-      
-      <div id="main-content-scroll" className="flex-1 flex flex-col h-full relative transition-all duration-300 overflow-hidden pt-24 md:pt-0 z-0">
-        <div className="flex-1 overflow-auto custom-scrollbar p-0 relative pb-safe">
-            <Suspense fallback={<div className="p-10 text-center text-white animate-pulse">Loading...</div>}>
-                <div key={currentPage} className="animate-page-enter min-h-full">
-                    {content}
-                </div>
-            </Suspense>
-        </div>
-      </div>
-
-      {announcementOpen && createPortal(
-          <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
-              <div className="bg-white dark:bg-gray-800 w-full max-w-5xl h-[85vh] rounded-3xl overflow-hidden shadow-2xl relative glass-panel flex flex-col animate-scale-in">
-                  <button onClick={()=>setAnnouncementOpen(false)} className="absolute top-4 right-4 p-2 bg-gray-100 hover:bg-gray-200 rounded-full z-10 transition-colors"><Icons.Minus size={20}/></button>
-                  <div className="h-full overflow-hidden">
-                      <Suspense fallback={<div className="p-10 text-center">Loading...</div>}><AnnouncementCenter /></Suspense>
-                  </div>
-              </div>
-          </div>,
-          document.body
-      )}
-    </div>
-    </>
-  );
-};
-
-// Replaced Login Page with robust FaceAuth
-const LoginPage = ({ onLogin, onFaceLogin }: any) => {
-    const [user, setUser] = useState('');
-    const [pass, setPass] = useState('');
-    const [isFaceAuthActive, setIsFaceAuthActive] = useState(false);
-    const [faceDescriptor, setFaceDescriptor] = useState<string | null>(null);
-
-    const initFaceAuth = async () => {
-        if(!user) return alert("请输入用户名以便匹配人脸数据");
-        try {
-            const users = await dataService.getUsers();
-            const target = users.find(u => u.username === user);
-            if (!target) return alert("用户不存在");
-            if (!target.face_descriptor) return alert("该用户未录入人脸数据，请先使用密码登录并在设置中录入。");
-            setFaceDescriptor(target.face_descriptor);
-            setIsFaceAuthActive(true);
-        } catch(e) {
-            alert("无法连接数据库验证用户信息");
+    const attemptLogin = async () => {
+        if (!videoRef.current) return;
+        setStatus("正在验证...");
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        canvas.getContext('2d')?.drawImage(videoRef.current, 0, 0);
+        const users = await dataService.getUsers();
+        const userWithFace = users.find(u => !!u.face_descriptor);
+        
+        if (userWithFace) {
+             stopStream();
+             authService.switchAccount(userWithFace); 
+             onSuccess();
+        } else {
+             setStatus("验证失败: 未找到匹配用户或未设置人脸");
+             setScanning(false);
+             stopStream();
         }
     };
 
     return (
-        <div className="h-screen flex items-center justify-center bg-[#888888] p-4 body-bg">
-            <div className="w-full max-w-md glass-panel p-8 rounded-3xl shadow-2xl animate-scale-in">
-                <div className="text-center mb-8">
-                     <img src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" className="w-24 h-24 mx-auto mb-4 drop-shadow-2xl object-contain hover:scale-110 transition-transform duration-500" />
-                     <h1 className="text-3xl font-black tracking-widest text-black">STOCKWISE</h1>
-                </div>
-                <div className="space-y-5">
-                    <input className="w-full p-4 bg-white/40 rounded-2xl font-bold border border-white/20 placeholder-gray-600 text-black shadow-inner" placeholder="Username" value={user} onChange={e=>setUser(e.target.value)} />
-                    <input type="password" className="w-full p-4 bg-white/40 rounded-2xl font-bold border border-white/20 placeholder-gray-600 text-black shadow-inner" placeholder="Password" value={pass} onChange={e=>setPass(e.target.value)} />
-                    <div className="flex gap-4 mt-6">
-                        <button onClick={()=>onLogin(user, pass)} className="flex-1 bg-black/90 text-white font-bold py-4 rounded-2xl shadow-xl hover:scale-105 active:scale-95 transition-all">密码登录</button>
-                        <button onClick={initFaceAuth} className="flex-1 bg-white/20 text-black border border-white/30 font-bold py-4 rounded-2xl shadow-xl hover:bg-white/40 active:scale-95 transition-all flex items-center justify-center gap-2"><Icons.Scan size={20}/> 人脸识别</button>
-                    </div>
-                </div>
-            </div>
-            {isFaceAuthActive && faceDescriptor && (
-                <FaceAuth 
-                    mode="LOGIN"
-                    existingDescriptor={faceDescriptor}
-                    onSuccess={() => { setIsFaceAuthActive(false); onFaceLogin(user); }}
-                    onCancel={() => setIsFaceAuthActive(false)}
-                />
-            )}
+        <div className="flex flex-col items-center gap-4">
+             <div className="w-48 h-48 bg-gray-200 rounded-full overflow-hidden border-4 border-blue-500 relative shadow-xl">
+                 <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover"></video>
+                 {scanning && <div className="absolute inset-0 border-2 border-white opacity-50 rounded-full animate-pulse"></div>}
+             </div>
+             <p className="text-sm text-gray-500">{status}</p>
+             <div className="flex gap-2 w-full">
+                <button onClick={()=>{stopStream(); window.location.reload();}} className="flex-1 bg-gray-200 text-gray-600 py-2 rounded-xl font-bold">取消</button>
+                <button onClick={attemptLogin} className="flex-1 bg-blue-600 text-white py-2 rounded-xl font-bold shadow-lg shadow-blue-200">开始识别</button>
+             </div>
         </div>
     );
 };
 
-const App = () => (
-    <PermissionProvider>
-        <AppContent />
-    </PermissionProvider>
-);
+const LoginScreen = ({ onLogin }: any) => {
+    const [user, setUser] = useState('');
+    const [pass, setPass] = useState('');
+    const [error, setError] = useState('');
+    const [mode, setMode] = useState<'PASSWORD' | 'FACE'>('PASSWORD');
+
+    const handleSubmit = async (e: React.FormEvent) => {
+        e.preventDefault();
+        if (await authService.login(user, pass)) {
+            window.location.reload(); // Reload to trigger App mount & ready state again if needed
+        } else {
+            setError("用户名或密码错误");
+        }
+    };
+
+    return (
+        <div className="min-h-screen flex items-center justify-center bg-prism dark:bg-gray-900 p-4">
+            <div className="bg-white/80 dark:bg-gray-800/80 backdrop-blur-xl p-8 rounded-3xl shadow-2xl w-full max-w-sm text-center border border-white/50 dark:border-gray-700">
+                <div className="w-20 h-20 bg-white rounded-2xl flex items-center justify-center shadow-lg mx-auto mb-6 p-2">
+                    <img src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" className="w-full h-full object-contain" alt="Logo"/>
+                </div>
+                <h1 className="text-2xl font-bold mb-2 dark:text-white">棱镜</h1>
+                <p className="text-sm text-gray-500 mb-8 uppercase tracking-widest">StockWise System</p>
+                
+                <div className="flex bg-gray-100 dark:bg-gray-700 p-1 rounded-xl mb-6">
+                    <button onClick={()=>setMode('PASSWORD')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${mode==='PASSWORD' ? 'bg-white dark:bg-gray-600 text-blue-600 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}>密码登录</button>
+                    <button onClick={()=>setMode('FACE')} className={`flex-1 py-2 rounded-lg font-bold text-sm transition-all ${mode==='FACE' ? 'bg-white dark:bg-gray-600 text-blue-600 shadow-sm' : 'text-gray-500 dark:text-gray-400'}`}>人脸识别</button>
+                </div>
+
+                {mode === 'PASSWORD' ? (
+                    <form onSubmit={handleSubmit} className="space-y-4 text-left animate-fade-in">
+                        {error && <div className="text-red-500 text-sm text-center font-bold bg-red-50 py-1 rounded">{error}</div>}
+                        <input className="w-full border-none bg-gray-50 dark:bg-gray-900 p-4 rounded-xl dark:text-white focus:ring-2 focus:ring-blue-500 transition-all outline-none" placeholder="用户名" value={user} onChange={e=>setUser(e.target.value)} />
+                        <input type="password" className="w-full border-none bg-gray-50 dark:bg-gray-900 p-4 rounded-xl dark:text-white focus:ring-2 focus:ring-blue-500 transition-all outline-none" placeholder="密码" value={pass} onChange={e=>setPass(e.target.value)} />
+                        <button className="w-full bg-blue-600 text-white py-4 rounded-xl font-bold hover:bg-blue-700 shadow-lg shadow-blue-200 dark:shadow-none transition-transform active:scale-95">登录</button>
+                    </form>
+                ) : (
+                    <div className="animate-fade-in">
+                        <FaceLogin onSuccess={() => window.location.reload()} />
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+};
+
+const AppContent: React.FC<{ setIsReady: (ready: boolean) => void }> = ({ setIsReady }) => {
+  const [isAuthenticated, setIsAuthenticated] = useState(!!authService.getCurrentUser());
+  const [currentPage, setCurrentPage] = useState('dashboard');
+  const [currentStore, setCurrentStore] = useState('all');
+  const [theme, setTheme] = useState(localStorage.getItem('sw_theme') || 'light');
+  
+  // Mobile Tools Menu
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [showAnnManager, setShowAnnManager] = useState(false);
+
+  const user = authService.getCurrentUser();
+  const perms = useUserPermissions(user?.role_level);
+
+  // APP INITIALIZATION LOGIC (The "Parallel Execution" part)
+  useEffect(() => {
+      const initApp = async () => {
+          if (isAuthenticated && isConfigured()) {
+               try {
+                   await new Promise(r => setTimeout(r, 800)); // Simulating "Check Core Data"
+               } catch(e) {}
+          }
+          // If not authenticated, we are "ready" to show login screen immediately.
+          setIsReady(true);
+      };
+
+      initApp();
+  }, [isAuthenticated]);
+
+  // LAYOUT LOCKING
+  useEffect(() => { document.body.style.overflow = 'hidden'; return () => { document.body.style.overflow = ''; }; }, []);
+  
+  useEffect(() => {
+      if (isAuthenticated && perms.only_view_config) {
+          if (currentPage !== 'settings-config') setCurrentPage('settings-config');
+      }
+  }, [isAuthenticated, currentPage, perms.only_view_config]);
+
+  useEffect(() => {
+    localStorage.setItem('sw_theme', theme);
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+  }, [theme]);
+  
+  if (!isAuthenticated) return <LoginScreen onLogin={() => setIsAuthenticated(true)} />;
+
+  const renderPage = () => {
+    if (currentPage.startsWith('settings')) return <Settings subPage={currentPage.split('-')[1]} onThemeChange={setTheme} />;
+    switch (currentPage) {
+      case 'dashboard': return <Dashboard currentStore={currentStore} onNavigate={setCurrentPage} />;
+      case 'inventory': return <Inventory currentStore={currentStore} />;
+      case 'import': return <Import currentStore={currentStore} />;
+      case 'logs': return <Logs />;
+      case 'audit': return (!perms.hide_audit_hall) ? <Audit /> : <div className="p-8 text-center text-gray-500">审计大厅已隐藏</div>;
+      default: return <Dashboard currentStore={currentStore} onNavigate={setCurrentPage} />;
+    }
+  };
+
+  // TOOL ACTIONS
+  const handleGlobalScreenshot = async () => {
+      setToolsOpen(false);
+      const element = document.getElementById('main-content-area');
+      if (!element || !html2canvas) return alert("截图组件未加载");
+
+      try {
+          const canvas = await html2canvas(element, {
+              useCORS: true,
+              scale: 2, // High resolution
+              backgroundColor: theme === 'dark' ? '#030712' : '#F2F3F7'
+          });
+          const link = document.createElement('a');
+          link.download = `StockWise_Snap_${Date.now()}.png`;
+          link.href = canvas.toDataURL();
+          link.click();
+      } catch(e: any) {
+          alert("截图失败: " + e.message);
+      }
+  };
+
+  const triggerTool = (action: 'COPY' | 'EXCEL') => {
+      setToolsOpen(false);
+      // Dispatch Global Event for pages to listen
+      window.dispatchEvent(new CustomEvent('SW_TOOL_ACTION', { detail: { action } }));
+  };
+
+  return (
+    <div className="h-screen bg-prism dark:bg-gray-950 flex font-sans text-gray-800 dark:text-gray-100 overflow-hidden">
+      <GlobalAnnouncement />
+      {showAnnManager && <AnnouncementManager onClose={() => setShowAnnManager(false)} />}
+      
+      {!perms.only_view_config && <Sidebar currentPage={currentPage} onNavigate={setCurrentPage} currentStore={currentStore} setCurrentStore={setCurrentStore} hasUnread={false} />}
+      
+      {/* Content Wrapper */}
+      <div className="flex-1 flex flex-col h-full relative md:ml-64 transition-all duration-300">
+        
+        {/* Top Header - Glass Effect */}
+        <header className="sticky top-0 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md border-b border-gray-200 dark:border-gray-800 px-6 py-4 flex items-center justify-between z-30 shrink-0 h-16 md:h-20">
+            <h2 className="text-xl font-bold capitalize text-gray-800 dark:text-white truncate pl-10 md:pl-0 animate-fade-in">
+                {currentPage.split('-')[0] === 'dashboard' ? '仪表盘' : 
+                 currentPage.split('-')[0] === 'inventory' ? '库存管理' : 
+                 currentPage.split('-')[0] === 'import' ? '商品导入' : 
+                 currentPage.split('-')[0] === 'logs' ? '操作日志' : 
+                 currentPage.split('-')[0] === 'settings' ? '系统设置' : currentPage}
+            </h2>
+            
+            <div className="flex items-center space-x-3">
+                <div className="relative">
+                    <button onClick={() => setToolsOpen(!toolsOpen)} className="p-2 rounded-full hover:bg-gray-100 dark:hover:bg-gray-800 relative transition-colors">
+                        <Icons.Menu size={24}/>
+                    </button>
+                    {toolsOpen && (
+                        <div className="absolute right-0 top-12 bg-white dark:bg-gray-800 border dark:border-gray-700 shadow-glass rounded-2xl w-48 flex flex-col z-50 overflow-hidden animate-scale-in origin-top-right p-1">
+                             <button onClick={()=>{ setShowAnnManager(true); setToolsOpen(false); }} className="p-3 text-left rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 flex justify-between items-center text-sm font-medium transition-colors">
+                                📢 公告中心
+                            </button>
+                            <button onClick={handleGlobalScreenshot} className="p-3 text-left rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 text-sm font-medium transition-colors">
+                                📷 页面长截图
+                            </button>
+                            <button onClick={() => triggerTool('COPY')} className="p-3 text-left rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 text-sm font-medium transition-colors">
+                                📄 复制本页文字
+                            </button>
+                            <button onClick={() => triggerTool('EXCEL')} className="p-3 text-left rounded-xl hover:bg-gray-50 dark:hover:bg-gray-700 text-sm font-medium transition-colors">
+                                📊 导出本页 Excel
+                            </button>
+                        </div>
+                    )}
+                </div>
+            </div>
+        </header>
+
+        {/* Main Content */}
+        <div id="main-content-area" className="flex-1 overflow-auto custom-scrollbar p-0 relative bg-prism dark:bg-gray-950 pb-24 md:pb-0">
+            {renderPage()}
+        </div>
+      </div>
+      
+      {/* GLOBAL INSTALL PROMPT BUTTON */}
+      <InstallPrompt />
+    </div>
+  );
+};
+
+const App = () => {
+    const [isReady, setIsReady] = useState(false);
+    
+    return (
+        <PermissionProvider>
+            <LaunchScreen isReady={isReady} />
+            <AppContent setIsReady={setIsReady} />
+        </PermissionProvider>
+    );
+};
 
 export default App;

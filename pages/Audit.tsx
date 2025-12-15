@@ -1,287 +1,134 @@
 
 import React, { useState, useEffect } from 'react';
-import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
-import { authService } from '../services/authService';
-import { User, AuditLog } from '../types';
-import { UsernameBadge } from '../components/UsernameBadge';
-import { createPortal } from 'react-dom';
+import { AuditLog } from '../types';
+import { Icons } from '../components/Icons';
 
-declare const window: any;
-
-export const Audit: React.FC<{ initialView?: 'LOGS' | 'DEVICES' }> = ({ initialView }) => {
-    const [view, setView] = useState<'LOGS' | 'DEVICES'>(initialView || 'LOGS');
-    const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
-    const [users, setUsers] = useState<User[]>([]);
-    
-    // Sync if prop changes
-    useEffect(() => {
-        if (initialView) setView(initialView);
-    }, [initialView]);
-
-    // State for Detail Modal
-    const [selectedLog, setSelectedLog] = useState<AuditLog | null>(null);
-
-    // State for Device Monitor
-    const [selectedUserId, setSelectedUserId] = useState('');
-    
-    const currentUser = authService.getCurrentUser();
+export const Audit: React.FC = () => {
+    const [logs, setLogs] = useState<AuditLog[]>([]);
+    const [page, setPage] = useState(1);
+    const [detailLog, setDetailLog] = useState<AuditLog | null>(null);
+    const PAGE_SIZE = 15;
 
     useEffect(() => {
-        loadData();
+        loadLogs();
     }, []);
 
-    const loadData = async () => {
-        const [logs, allUsers] = await Promise.all([
-            dataService.getAuditLogs(100),
-            dataService.getUsers()
-        ]);
-        setAuditLogs(logs);
-        
-        // Filter users for Device Monitor: Only allow selecting self or lower permissions (Higher Number)
-        if (currentUser) {
-            // 00 sees everyone. Others see self and lower roles.
-            const validUsers = allUsers.filter(u => u.role_level >= currentUser.role_level);
-            setUsers(validUsers);
-        }
+    const loadLogs = async () => {
+        try {
+            const data = await dataService.getAuditLogs(100); 
+            setLogs(data);
+        } catch(e) { console.error(e); }
     };
 
-    // --- Excel Export Listener ---
-    useEffect(() => {
-        const handleExcelExport = () => {
-            if (!window.XLSX) return alert("Excel 模块未加载");
-            
-            const exportRows = auditLogs.map(l => ({
-                "时间戳": new Date(l.timestamp).toLocaleString(),
-                "表名": l.table_name,
-                "操作类型": l.operation,
-                "变动详情": JSON.stringify(l.new_data)
-            }));
-
-            const ws = window.XLSX.utils.json_to_sheet(exportRows);
-            const wb = window.XLSX.utils.book_new();
-            window.XLSX.utils.book_append_sheet(wb, ws, "AuditTrail");
-            window.XLSX.writeFile(wb, `StockWise_Audit_${Date.now()}.xlsx`);
-        };
-
-        window.addEventListener('trigger-excel-export', handleExcelExport);
-        return () => window.removeEventListener('trigger-excel-export', handleExcelExport);
-    }, [auditLogs]);
-
-    const targetUser = users.find(u => u.id === selectedUserId);
+    const totalPages = Math.ceil(logs.length / PAGE_SIZE);
+    useEffect(() => { if (page > totalPages && totalPages > 0) setPage(totalPages); }, [totalPages]);
+    
+    const paginatedLogs = logs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
 
     return (
-        <div className="p-4 md:p-8 animate-fade-in pb-24">
-            {/* Header Tabs */}
-            <div className="flex gap-6 mb-8 border-b border-black/10 dark:border-white/10 pb-2">
-                <button 
-                    onClick={()=>setView('LOGS')} 
-                    className={`text-2xl font-black transition-colors flex items-center gap-2 ${view==='LOGS'?'text-black dark:text-white':'text-gray-400 hover:text-gray-600'}`}
-                >
-                    <Icons.AlertTriangle size={24}/> 操作审计
+        <div className="p-4 md:p-8 max-w-7xl mx-auto">
+            <h1 className="text-2xl font-bold text-gray-800 dark:text-white mb-6 flex items-center gap-2">
+                <Icons.AlertTriangle size={24} className="text-yellow-500" />
+                审计大厅 (Read Only)
+            </h1>
+
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-x-auto shadow-sm transition-colors">
+                <table className="w-full text-left text-xs font-mono min-w-[700px]">
+                    <thead className="bg-gray-950 text-gray-300 uppercase">
+                        <tr>
+                            <th className="px-4 py-3">ID</th>
+                            <th className="px-4 py-3">时间</th>
+                            <th className="px-4 py-3">表名</th>
+                            <th className="px-4 py-3">操作</th>
+                            <th className="px-4 py-3">变更详情 (JSON)</th>
+                            <th className="px-4 py-3">详情</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-800 dark:divide-gray-700">
+                        {paginatedLogs.map(log => (
+                            <tr key={log.id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                                <td className="px-4 py-2 text-gray-500">{log.id}</td>
+                                <td className="px-4 py-2 text-gray-600 dark:text-gray-400 whitespace-nowrap">
+                                    {new Date(log.timestamp).toLocaleString()}
+                                </td>
+                                <td className="px-4 py-2 font-bold text-blue-600 dark:text-blue-400">{log.table_name}</td>
+                                <td className="px-4 py-2">
+                                    <span className={`px-2 py-0.5 rounded ${
+                                        log.operation === 'DELETE' ? 'bg-red-900 text-red-100' :
+                                        log.operation === 'INSERT' ? 'bg-green-900 text-green-100' : 'bg-blue-900 text-blue-100'
+                                    }`}>
+                                        {log.operation}
+                                    </span>
+                                </td>
+                                <td className="px-4 py-2 text-gray-500 truncate max-w-xs">
+                                    {JSON.stringify(log.new_data || log.old_data)}
+                                </td>
+                                <td className="px-4 py-2">
+                                    <button 
+                                        onClick={() => setDetailLog(log)}
+                                        className="text-white bg-blue-600 hover:bg-blue-700 px-3 py-1 rounded shadow-sm text-xs font-bold"
+                                    >
+                                        详情
+                                    </button>
+                                </td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+
+            {/* Custom Pagination: Input + Total */}
+            <div className="flex flex-wrap justify-between items-center bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm mt-4 gap-4">
+                <button disabled={page<=1} onClick={()=>setPage(p=>Math.max(1, p-1))} className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50 dark:text-white transition-colors hover:bg-gray-200 dark:hover:bg-gray-600">
+                    上一页
                 </button>
-                <button 
-                    onClick={()=>setView('DEVICES')} 
-                    className={`text-2xl font-black transition-colors flex items-center gap-2 ${view==='DEVICES'?'text-black dark:text-white':'text-gray-400 hover:text-gray-600'}`}
-                >
-                    <Icons.Scan size={24}/> 账户设备
+                <div className="flex items-center gap-2 bg-gray-50 dark:bg-gray-900 px-4 py-2 rounded-lg border border-gray-200 dark:border-gray-700">
+                    <span className="text-gray-500 dark:text-gray-400 text-sm font-medium">当前</span>
+                    <input 
+                        type="number" min="1" max={totalPages} 
+                        className="w-16 text-center bg-white dark:bg-gray-800 border dark:border-gray-600 rounded text-sm dark:text-white font-bold p-1 focus:ring-2 focus:ring-blue-500 outline-none"
+                        value={page} onChange={e => {
+                            const val = Number(e.target.value);
+                            if(val >= 1 && val <= totalPages) setPage(val);
+                        }}
+                    />
+                    <span className="text-gray-500 dark:text-gray-400 text-sm font-medium">/ 共 {totalPages} 页</span>
+                </div>
+                <button disabled={page>=totalPages} onClick={()=>setPage(p=>Math.min(totalPages, p+1))} className="px-4 py-2 bg-gray-100 dark:bg-gray-700 rounded disabled:opacity-50 dark:text-white transition-colors hover:bg-gray-200 dark:hover:bg-gray-600">
+                    下一页
                 </button>
             </div>
 
-            {/* --- LOGS VIEW --- */}
-            {view === 'LOGS' && (
-                <div className="glass-panel rounded-3xl overflow-hidden shadow-lg border border-white/20">
-                    <div className="overflow-x-auto">
-                        <table className="w-full text-left text-sm">
-                            <thead className="bg-black/5 dark:bg-white/5 font-bold uppercase text-black dark:text-white border-b border-black/5">
-                                <tr>
-                                    <th className="p-4 w-48">时间</th>
-                                    <th className="p-4 w-32">类型 / 表</th>
-                                    <th className="p-4">简要内容</th>
-                                    <th className="p-4 w-24 text-right">操作</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-black/5 dark:divide-white/5">
-                                {auditLogs.map(l => (
-                                    <tr key={l.id} className="hover:bg-black/5 dark:hover:bg-white/5 transition-colors">
-                                        <td className="p-4 text-black dark:text-gray-300">
-                                            <div className="font-bold">{new Date(l.timestamp).toLocaleDateString()}</div>
-                                            <div className="text-xs opacity-60 font-mono">{new Date(l.timestamp).toLocaleTimeString()}</div>
-                                        </td>
-                                        <td className="p-4">
-                                            <span className="font-black text-xs uppercase bg-gray-200 dark:bg-gray-700 px-2 py-1 rounded text-black dark:text-white block w-fit mb-1">{l.operation}</span>
-                                            <span className="text-xs font-mono opacity-60">{l.table_name}</span>
-                                        </td>
-                                        <td className="p-4">
-                                            <div className="truncate max-w-xs md:max-w-md opacity-70 font-mono text-xs dark:text-gray-300">
-                                                {JSON.stringify(l.new_data)}
-                                            </div>
-                                        </td>
-                                        <td className="p-4 text-right">
-                                            <button 
-                                                onClick={() => setSelectedLog(l)}
-                                                className="px-4 py-2 bg-black text-white dark:bg-white dark:text-black rounded-xl font-bold text-xs shadow hover:scale-105 transition-transform"
-                                            >
-                                                详情
-                                            </button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                        {auditLogs.length === 0 && <div className="p-10 text-center text-gray-400">暂无审计记录</div>}
-                    </div>
-                </div>
-            )}
-
-            {/* --- DEVICES VIEW --- */}
-            {view === 'DEVICES' && (
-                <div className="max-w-3xl mx-auto space-y-6 animate-slide-up">
-                    <div className="glass-panel p-8 rounded-3xl shadow-xl border border-white/20">
-                        <label className="block text-sm font-bold text-gray-500 mb-2">选择账户 (仅显示权限低于或等于您的账户)</label>
-                        <select 
-                            className="w-full p-4 rounded-2xl bg-gray-50 dark:bg-gray-800 border-none font-bold text-lg outline-none mb-6 dark:text-white shadow-inner" 
-                            onChange={e=>setSelectedUserId(e.target.value)}
-                            value={selectedUserId}
-                        >
-                            <option value="">-- 请选择账户 --</option>
-                            {users.map(u => (
-                                <option key={u.id} value={u.id}>
-                                    {u.username} (Level {u.role_level})
-                                </option>
-                            ))}
-                        </select>
-
-                        {targetUser ? (
-                            <div className="bg-blue-50 dark:bg-blue-900/20 p-6 rounded-2xl border border-blue-100 dark:border-blue-800 animate-fade-in">
-                                <div className="flex items-start gap-4 mb-6">
-                                    <div className="p-3 bg-blue-100 dark:bg-blue-800 rounded-full text-blue-600 dark:text-blue-200">
-                                        <Icons.Store size={24}/>
-                                    </div>
-                                    <div>
-                                        <h3 className="font-bold text-lg dark:text-white mb-2">设备活动详情</h3>
-                                        <p className="text-sm text-gray-600 dark:text-gray-300 leading-relaxed">
-                                            <span className="font-black text-black dark:text-white text-base mr-1">{targetUser.username}</span>
-                                            目前已在以下设备上登录 棱镜 账号，或过去28天内曾在这些设备上登录过 棱镜 账号。可能会显示来自同一设备的多个活动会话。
-                                        </p>
-                                    </div>
-                                </div>
-
-                                <div className="space-y-3">
-                                    {targetUser.device_history && targetUser.device_history.length > 0 ? (
-                                        targetUser.device_history.map((device, idx) => (
-                                            <div key={idx} className="bg-white dark:bg-gray-800 p-4 rounded-xl flex items-center justify-between shadow-sm">
-                                                <div className="flex items-center gap-3">
-                                                    <Icons.LayoutDashboard className="text-gray-400"/>
-                                                    <div>
-                                                        <div className="font-bold text-sm dark:text-white">{device.device_name || '未知设备'}</div>
-                                                        <div className="text-xs text-gray-400 font-mono">IP: {device.ip || 'Unknown'}</div>
-                                                    </div>
-                                                </div>
-                                                <div className="text-right">
-                                                    <div className="text-xs font-bold text-green-600 bg-green-100 dark:bg-green-900 dark:text-green-300 px-2 py-1 rounded mb-1">
-                                                        {idx === 0 ? '最近登录' : '历史会话'}
-                                                    </div>
-                                                    <div className="text-xs text-gray-400">{new Date(device.last_login).toLocaleString()}</div>
-                                                </div>
-                                            </div>
-                                        ))
-                                    ) : (
-                                        <div className="text-center py-8 text-gray-400 bg-white/50 dark:bg-black/20 rounded-xl">
-                                            暂无设备登录记录
-                                        </div>
-                                    )}
-                                </div>
-                            </div>
-                        ) : (
-                            <div className="text-center py-12 text-gray-400 bg-gray-50 dark:bg-gray-800/50 rounded-2xl border-2 border-dashed border-gray-200 dark:border-gray-700">
-                                <Icons.Scan size={48} className="mx-auto mb-4 opacity-20"/>
-                                <p>请先在上方选择一个账户以查看详情</p>
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
-
-            {/* --- DETAIL MODAL (Independent Page Style) --- */}
-            {selectedLog && createPortal(
-                <div className="fixed inset-0 z-[200] bg-gray-100 dark:bg-gray-900 overflow-y-auto animate-slide-up flex flex-col">
-                    {/* Modal Header */}
-                    <div className="sticky top-0 bg-white dark:bg-gray-800 shadow-md z-10 px-6 py-4 flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                            <button 
-                                onClick={()=>setSelectedLog(null)} 
-                                className="p-2 bg-gray-100 dark:bg-gray-700 rounded-full hover:bg-gray-200 transition-colors"
-                            >
-                                <Icons.ArrowRightLeft size={20} className="rotate-180 dark:text-white"/>
+            {/* Detail Modal */}
+            {detailLog && (
+                <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 animate-fade-in">
+                    <div className="bg-white dark:bg-gray-900 rounded-xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col max-h-[80vh] border dark:border-gray-700">
+                        <div className="p-4 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-800">
+                            <h3 className="text-lg font-bold dark:text-white">审计详情 (ID: {detailLog.id})</h3>
+                            <button onClick={() => setDetailLog(null)} className="text-gray-500 hover:text-gray-800 dark:text-gray-400 dark:hover:text-white">
+                                <Icons.Minus size={24} />
                             </button>
-                            <div>
-                                <h1 className="text-xl font-black dark:text-white">审计详情</h1>
-                                <p className="text-xs text-gray-500 font-mono">{selectedLog.id}</p>
-                            </div>
                         </div>
-                        <div className="text-right">
-                            <div className="text-sm font-bold dark:text-white">{new Date(selectedLog.timestamp).toLocaleString()}</div>
-                        </div>
-                    </div>
-
-                    {/* Modal Content */}
-                    <div className="flex-1 p-6 max-w-4xl mx-auto w-full space-y-6">
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                            <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700">
-                                <h3 className="text-gray-500 font-bold text-sm uppercase mb-4">基本信息</h3>
-                                <div className="space-y-4">
-                                    <div className="flex justify-between border-b dark:border-gray-700 pb-2">
-                                        <span className="text-gray-500">表名 (Table)</span>
-                                        <span className="font-mono font-bold dark:text-white">{selectedLog.table_name}</span>
-                                    </div>
-                                    <div className="flex justify-between border-b dark:border-gray-700 pb-2">
-                                        <span className="text-gray-500">操作类型</span>
-                                        <span className={`font-black px-2 py-0.5 rounded text-white ${
-                                            selectedLog.operation === 'DELETE' ? 'bg-red-500' :
-                                            selectedLog.operation === 'UPDATE' ? 'bg-blue-500' :
-                                            'bg-green-500'
-                                        }`}>
-                                            {selectedLog.operation}
-                                        </span>
-                                    </div>
-                                    <div className="flex justify-between border-b dark:border-gray-700 pb-2">
-                                        <span className="text-gray-500">记录 ID</span>
-                                        <span className="font-mono text-xs dark:text-white">{selectedLog.record_id}</span>
-                                    </div>
-                                </div>
+                        <div className="p-6 overflow-y-auto flex-1 font-mono text-sm dark:text-gray-300 space-y-4">
+                            <div className="bg-red-50 dark:bg-red-900/10 p-4 rounded-lg border border-red-100 dark:border-red-900/30">
+                                <span className="font-bold text-red-600 dark:text-red-400 block mb-2 border-b border-red-200 dark:border-red-900/50 pb-1">旧数据 (Old Data)</span>
+                                <pre className="whitespace-pre-wrap break-all text-xs text-gray-700 dark:text-gray-300">
+                                    {detailLog.old_data ? JSON.stringify(detailLog.old_data, null, 2) : 'N/A'}
+                                </pre>
                             </div>
-
-                            <div className="bg-white dark:bg-gray-800 p-6 rounded-3xl shadow-sm border border-gray-100 dark:border-gray-700">
-                                <h3 className="text-gray-500 font-bold text-sm uppercase mb-4">操作上下文</h3>
-                                <p className="text-sm text-gray-600 dark:text-gray-300">
-                                    此记录由系统自动生成，记录了数据库层面的原子变动。如果这是 "CLIENT_ACTION"，则表示用户在客户端触发了特定行为（如登录、登出）。
-                                </p>
-                            </div>
-                        </div>
-
-                        <div className="bg-white dark:bg-gray-800 rounded-3xl shadow-lg border border-gray-100 dark:border-gray-700 overflow-hidden">
-                            <div className="bg-gray-50 dark:bg-gray-700 p-4 border-b border-gray-100 dark:border-gray-600 flex justify-between items-center">
-                                <h3 className="font-bold text-black dark:text-white">变动数据 (JSON Payload)</h3>
-                                <button 
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(JSON.stringify(selectedLog.new_data, null, 2));
-                                        alert("JSON 已复制");
-                                    }}
-                                    className="text-xs bg-black text-white px-3 py-1 rounded-lg hover:opacity-80"
-                                >
-                                    复制 JSON
-                                </button>
-                            </div>
-                            <div className="p-0 overflow-x-auto">
-                                <pre className="p-6 text-sm font-mono text-gray-800 dark:text-green-400 whitespace-pre-wrap break-all">
-                                    {JSON.stringify(selectedLog.new_data, null, 4)}
+                            <div className="bg-green-50 dark:bg-green-900/10 p-4 rounded-lg border border-green-100 dark:border-green-900/30">
+                                <span className="font-bold text-green-600 dark:text-green-400 block mb-2 border-b border-green-200 dark:border-green-900/50 pb-1">新数据 (New Data)</span>
+                                <pre className="whitespace-pre-wrap break-all text-xs text-gray-700 dark:text-gray-300">
+                                    {detailLog.new_data ? JSON.stringify(detailLog.new_data, null, 2) : 'N/A'}
                                 </pre>
                             </div>
                         </div>
+                        <div className="p-4 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-800 text-right">
+                            <button onClick={() => setDetailLog(null)} className="px-6 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 rounded font-bold text-gray-700 dark:text-gray-200 text-sm">关闭</button>
+                        </div>
                     </div>
-                </div>,
-                document.body
+                </div>
             )}
         </div>
     );

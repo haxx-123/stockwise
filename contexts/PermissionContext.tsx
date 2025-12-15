@@ -1,4 +1,5 @@
 
+
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import { getSupabaseClient, isConfigured } from '../services/supabaseClient';
 import { UserPermissions, RoleLevel } from '../types';
@@ -59,12 +60,7 @@ export const PermissionProvider: React.FC<{ children: React.ReactNode }> = ({ ch
                         hide_perm_page: newUserRow.hide_perm_page ?? DEFAULT_PERMISSIONS.hide_perm_page,
                         hide_audit_hall: newUserRow.hide_audit_hall ?? DEFAULT_PERMISSIONS.hide_audit_hall,
                         hide_store_management: newUserRow.hide_store_management ?? DEFAULT_PERMISSIONS.hide_store_management,
-                        only_view_config: newUserRow.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config,
-                        
-                        // New fields
-                        hide_new_store_btn: newUserRow.hide_new_store_btn ?? DEFAULT_PERMISSIONS.hide_new_store_btn,
-                        hide_excel_export_btn: newUserRow.hide_excel_export_btn ?? DEFAULT_PERMISSIONS.hide_excel_export_btn,
-                        hide_store_edit_btn: newUserRow.hide_store_edit_btn ?? DEFAULT_PERMISSIONS.hide_store_edit_btn
+                        only_view_config: newUserRow.only_view_config ?? DEFAULT_PERMISSIONS.only_view_config
                     };
                     
                     setCurrentUserPermissions(newPerms);

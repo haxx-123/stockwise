@@ -4,7 +4,7 @@ import { dataService } from './dataService';
 
 export const DEFAULT_PERMISSIONS: UserPermissions = {
     role_level: 9,
-    logs_level: 'D', 
+    logs_level: 'D', // Default to strict
     announcement_rule: 'VIEW',
     store_scope: 'LIMITED',
     show_excel: false,
@@ -13,10 +13,7 @@ export const DEFAULT_PERMISSIONS: UserPermissions = {
     hide_perm_page: false,
     hide_audit_hall: true,
     hide_store_management: true,
-    only_view_config: false,
-    hide_new_store_btn: false,
-    hide_excel_export_btn: false,
-    hide_store_edit_btn: false
+    only_view_config: false
 };
 
 // Initial Admin Account
@@ -36,10 +33,7 @@ export const DEFAULT_ADMIN: User = {
         hide_perm_page: false,
         hide_audit_hall: false,
         hide_store_management: false,
-        only_view_config: false,
-        hide_new_store_btn: false,
-        hide_excel_export_btn: false,
-        hide_store_edit_btn: false
+        only_view_config: false
     },
     allowed_store_ids: []
 };
@@ -69,13 +63,14 @@ class AuthService {
             return true;
         }
 
-        // 2. Check DB Users 
+        // 2. Check DB Users (Now queries View via dataService)
         try {
             const users = await dataService.getUsers(); 
             const user = users.find(u => u.username === username && u.password === passwordInput);
             
             if (user) {
-                // Ensure permissions
+                // Ensure permissions object exists and has defaults for new fields
+                // Although view should provide them, we safety merge
                 user.permissions = { ...DEFAULT_PERMISSIONS, ...user.permissions };
                 
                 this.currentUser = user;
@@ -87,20 +82,6 @@ class AuthService {
             console.error("Login DB check failed", e);
         }
 
-        return false;
-    }
-
-    async loginWithFace(username: string): Promise<boolean> {
-        // Logic handled in component (Face Match), this just sets session
-        const users = await dataService.getUsers();
-        const user = users.find(u => u.username === username);
-        if (user) {
-            user.permissions = { ...DEFAULT_PERMISSIONS, ...user.permissions };
-            this.currentUser = user;
-            this.setSession(user);
-            await dataService.logClientAction('LOGIN_FACE', { username });
-            return true;
-        }
         return false;
     }
 
@@ -120,7 +101,7 @@ class AuthService {
         if (this.currentUser) dataService.logClientAction('LOGOUT', { username: this.currentUser.username });
         this.currentUser = null;
         sessionStorage.removeItem(this.SESSION_KEY);
-        sessionStorage.clear(); 
+        sessionStorage.clear(); // Clear all session flags (e.g., popup viewed)
         window.location.reload();
     }
 }
