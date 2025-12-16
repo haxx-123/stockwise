@@ -5,19 +5,22 @@ import { UsernameBadge } from './UsernameBadge';
 import { SVIPBadge } from './SVIPBadge';
 import { useUserPermissions } from '../contexts/PermissionContext';
 import { StoreSwitcher } from './StoreSwitcher';
+import { dataService } from '../services/dataService';
+import { getSupabaseClient } from '../services/supabaseClient';
 
 interface SidebarProps {
   currentPage: string;
   onNavigate: (page: string) => void;
   currentStore: string;
   setCurrentStore: (storeId: string) => void;
-  hasUnread?: boolean;
+  hasUnread?: boolean; // Prop from parent if needed, but we handle internally now
 }
 
-export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, currentStore, setCurrentStore, hasUnread }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, currentStore, setCurrentStore }) => {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false); 
+  const [unreadCount, setUnreadCount] = useState(0); // Phase 6
   
   const user = authService.getCurrentUser();
   const perms = useUserPermissions(user?.role_level);
@@ -27,6 +30,36 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
       window.addEventListener('resize', handleResize);
       return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // --- PHASE 6: Realtime Unread Count ---
+  useEffect(() => {
+      if (!user) return;
+      
+      const fetchUnread = async () => {
+          const list = await dataService.getAnnouncements();
+          // Logic: Valid Date + Not in read_by array
+          const now = new Date();
+          const count = list.filter(a => 
+              !a.is_force_deleted && 
+              new Date(a.valid_until) > now && 
+              !a.read_by?.includes(user.id)
+          ).length;
+          setUnreadCount(count);
+      };
+      
+      fetchUnread();
+
+      // Listen for new announcements
+      const client = getSupabaseClient();
+      if (client) {
+          const channel = client.channel('announcement_badge')
+              .on('postgres_changes', { event: '*', schema: 'public', table: 'announcements' }, () => {
+                  fetchUnread(); // Re-fetch on any change
+              })
+              .subscribe();
+          return () => { client.removeChannel(channel); };
+      }
+  }, [user?.id]);
 
   const menuItems = [
     { id: 'dashboard', label: '仪表盘', icon: Icons.LayoutDashboard },
@@ -128,9 +161,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ currentPage, onNavigate, curre
           <>
             <button 
                 onClick={() => setIsMobileMenuOpen(true)}
-                className={`fixed top-3 left-4 z-50 p-2 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md rounded-full shadow-lg border border-gray-200 dark:border-gray-700 transition-transform duration-200 ${isMobileMenuOpen ? 'scale-0 opacity-0' : 'scale-100 opacity-100'}`}
+                className={`fixed top-3 left-4 z-50 p-2 bg-white/80 dark:bg-gray-900/80 backdrop-blur-md rounded-full shadow-lg border border-gray-200 dark:border-gray-700 transition-transform duration-200 ${isMobileMenuOpen ? 'scale-0 opacity-0' : 'scale-100 opacity-100'} relative`}
             >
                 <img src="https://i.ibb.co/vxq7QfYd/retouch-2025121423241826.png" className="w-6 h-6 object-contain" alt="Menu" />
+                {unreadCount > 0 && <div className="absolute top-0 right-0 w-3 h-3 bg-red-500 rounded-full border-2 border-white"></div>}
             </button>
 
             {isMobileMenuOpen && (

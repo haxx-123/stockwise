@@ -4,12 +4,23 @@ import { dataService } from '../services/dataService';
 import { Batch, Product, Store, AggregatedStock } from '../types';
 import { isConfigured } from '../services/supabaseClient';
 import { formatUnit, ph, matchSearch, getUnitSplit, generatePageSummary } from '../utils/formatters';
+import { usePermission } from '../hooks/usePermission'; // Phase 6
 
 declare const Html5Qrcode: any;
 declare const window: any;
 
 interface InventoryProps {
   currentStore?: string;
+  compact?: boolean;
+  onMobileClick?: (item: any) => void;
+  deleteMode?: boolean;
+  selectedToDelete?: Set<string>;
+  toggleSelectProduct?: any;
+  selectedBatchIds?: Set<string>;
+  toggleSelectBatch?: any;
+  handleSelectAllOnPage?: any;
+  data?: any;
+  onRefresh?: any;
 }
 
 export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
@@ -31,12 +42,15 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   
   const [mobileDetailItem, setMobileDetailItem] = useState<AggregatedStock | null>(null);
 
+  // Phase 6 Permissions
+  const canExport = usePermission('inventory.export');
+  const canDelete = usePermission('inventory.delete');
+
   const loadData = async () => {
     setLoading(true);
     try {
       const [p, b, s] = await Promise.all([
         dataService.getProducts(false, currentStore),
-        // Important: If currentStore is 'all', getBatches returns batches from ALL stores.
         dataService.getBatches(currentStore === 'all' ? undefined : currentStore),
         dataService.getStores()
       ]);
@@ -110,7 +124,6 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
   useEffect(() => {
       const handleToolAction = (e: any) => {
           const { action } = e.detail;
-          // Use aggregatedData (all filtered results) instead of just paginatedData for export
           const dataToExport = aggregatedData; 
           
           if (dataToExport.length === 0) {
@@ -122,6 +135,12 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
               const text = generatePageSummary('inventory', dataToExport);
               navigator.clipboard.writeText(text).then(() => alert("已复制库存清单到剪贴板"));
           } else if (action === 'EXCEL') {
+              // Check Permission before export
+              if (!canExport) {
+                  alert("权限不足：您没有导出 Excel 的权限。");
+                  return;
+              }
+
               if (!(window as any).XLSX) return alert("Excel 组件未加载");
               const excelRows = dataToExport.flatMap(item => {
                   if (item.batches.length === 0) {
@@ -150,10 +169,11 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
 
       window.addEventListener('SW_TOOL_ACTION', handleToolAction);
       return () => window.removeEventListener('SW_TOOL_ACTION', handleToolAction);
-  }, [aggregatedData]);
+  }, [aggregatedData, canExport]); // Added dependency canExport
 
 
   const handleBulkDelete = async () => {
+      if (!canDelete) return alert("权限不足：仅管理员可执行删除操作。");
       if (selectedToDelete.size + selectedBatchIds.size === 0) return;
       if (!confirm(`确认删除选中的 ${selectedToDelete.size} 个商品和 ${selectedBatchIds.size} 个批次? (软删除)`)) return;
       try {
@@ -201,9 +221,11 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
       <div className="bg-white dark:bg-gray-800 p-4 rounded-xl border border-gray-200 dark:border-gray-700 shadow-sm space-y-4">
           <div className="flex flex-col md:flex-row gap-4 items-center">
               <div className="flex items-center gap-2 w-full md:w-auto">
-                   <button onClick={() => deleteMode ? handleBulkDelete() : setDeleteMode(true)} className={`px-4 py-2 rounded-lg font-bold transition-colors w-full md:w-auto ${deleteMode ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
-                      {deleteMode ? `确认删除 (${selectedToDelete.size + selectedBatchIds.size})` : '删除 (管理)'}
-                   </button>
+                   {canDelete && (
+                       <button onClick={() => deleteMode ? handleBulkDelete() : setDeleteMode(true)} className={`px-4 py-2 rounded-lg font-bold transition-colors w-full md:w-auto ${deleteMode ? 'bg-red-600 text-white' : 'bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300'}`}>
+                          {deleteMode ? `确认删除 (${selectedToDelete.size + selectedBatchIds.size})` : '删除 (管理)'}
+                       </button>
+                   )}
                    {deleteMode && (
                        <label className="flex items-center gap-1 cursor-pointer select-none">
                            <input type="checkbox" onChange={handleSelectAllOnPage} className="w-5 h-5 accent-red-600 rounded border-2 border-white" />
@@ -252,16 +274,23 @@ export const Inventory: React.FC<InventoryProps> = ({ currentStore }) => {
                   <button onClick={() => setMobileDetailItem(null)} className="p-2 bg-white dark:bg-gray-800 rounded-full shadow"><Icons.ArrowRightLeft size={20} className="transform rotate-180 dark:text-white"/></button>
                   <h1 className="font-bold text-lg dark:text-white">{mobileDetailItem.product.name} - 详情</h1>
               </div>
-              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border dark:border-gray-700 mb-4">
-                  <div className="flex justify-between items-center">
-                       <div>
-                           <div className="text-xs text-gray-500">SKU: {mobileDetailItem.product.sku}</div>
-                           <div className="text-xs text-gray-500">类别: {mobileDetailItem.product.category}</div>
+              <div className="bg-white dark:bg-gray-800 rounded-xl p-4 shadow-sm border dark:border-gray-700 mb-4 flex gap-4">
+                   {mobileDetailItem.product.image_url ? (
+                       <img src={mobileDetailItem.product.image_url} alt="Product" className="w-20 h-20 object-cover rounded-lg border dark:border-gray-700" />
+                   ) : (
+                       <div className="w-20 h-20 bg-gray-100 dark:bg-gray-700 rounded-lg flex items-center justify-center text-gray-400"><Icons.Package size={32}/></div>
+                   )}
+                   <div className="flex-1">
+                       <div className="flex justify-between items-center">
+                           <div>
+                               <div className="text-xs text-gray-500">SKU: {mobileDetailItem.product.sku}</div>
+                               <div className="text-xs text-gray-500">类别: {mobileDetailItem.product.category}</div>
+                           </div>
+                           <div className="text-right">
+                               <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{formatUnit(mobileDetailItem.totalQuantity, mobileDetailItem.product)}</div>
+                           </div>
                        </div>
-                       <div className="text-right">
-                           <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{formatUnit(mobileDetailItem.totalQuantity, mobileDetailItem.product)}</div>
-                       </div>
-                  </div>
+                   </div>
               </div>
 
               <h3 className="font-bold dark:text-white mb-2">批次列表</h3>
@@ -304,6 +333,7 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                          {deleteMode && !isMobileOverlay && (
                              <th className="px-2 py-4 w-10 text-center"></th>
                          )}
+                         <th className="px-4 py-4 truncate w-16">图片</th>
                          <th className="px-4 py-4 truncate w-1/4">商品名称</th>
                          <th className="px-4 py-4 truncate w-1/6">SKU/类别</th>
                          <th className="px-4 py-4 truncate w-1/4">总库存 (大单位 小单位)</th>
@@ -325,6 +355,11 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                                 <input type="checkbox" checked={selectedToDelete.has(item.product.id)} onChange={()=>toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id))} className="w-5 h-5 rounded cursor-pointer accent-blue-600 border-2 dark:border-white dark:bg-gray-700" />
                                             </td>
                                         )}
+                                        <td className="px-4 py-4">
+                                            {item.product.image_url ? (
+                                                <img src={item.product.image_url} alt="mini" className="w-10 h-10 object-cover rounded border dark:border-gray-600" />
+                                            ) : <div className="w-10 h-10 bg-gray-100 dark:bg-gray-700 rounded border dark:border-gray-600 flex items-center justify-center text-gray-300"><Icons.Package size={16}/></div>}
+                                        </td>
                                         <td className="px-4 py-4 font-bold text-gray-800 dark:text-white truncate" title={item.product.name}>{item.product.name}</td>
                                         <td className="px-4 py-4 text-gray-500 text-xs truncate">
                                             <div>{ph(item.product.sku)}</div>
@@ -338,7 +373,7 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                 )}
                                 {isExpanded && (
                                     <tr className="bg-gray-50/50 dark:bg-gray-900/50 animate-fade-in">
-                                        <td colSpan={deleteMode ? 6 : 5} className="p-0">
+                                        <td colSpan={deleteMode ? 7 : 6} className="p-0">
                                             <div className="border-t border-b border-gray-200 dark:border-gray-700">
                                                 <div className="flex bg-gray-200 dark:bg-gray-800 p-2 text-xs font-bold text-gray-600 dark:text-gray-300">
                                                     <div className="w-10 text-center">选</div>
@@ -351,8 +386,10 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                                 </div>
                                                 {item.batches.map((batch: any) => {
                                                     const split = getUnitSplit(batch.quantity, item.product);
+                                                    // Phase 4: Visual Logic for Expiry
+                                                    const isExpiring = batch.expiry_date && new Date(batch.expiry_date) < new Date(Date.now() + 30*24*60*60*1000);
                                                     return (
-                                                        <div key={batch.id} className="flex items-center p-3 border-b dark:border-gray-800 last:border-0 hover:bg-white dark:hover:bg-gray-800 transition-colors text-sm">
+                                                        <div key={batch.id} className={`flex items-center p-3 border-b dark:border-gray-800 last:border-0 hover:bg-white dark:hover:bg-gray-800 transition-colors text-sm ${isExpiring ? 'bg-amber-50/50 dark:bg-amber-900/10' : ''}`}>
                                                             <div className="w-10 text-center">
                                                                 {deleteMode && <input type="checkbox" checked={selectedBatchIds.has(batch.id)} onChange={()=>toggleSelectBatch(batch.id)} className="w-4 h-4 accent-blue-600 dark:border-white" />}
                                                             </div>
@@ -363,7 +400,10 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                                                             <div className="flex-1 font-bold text-gray-800 dark:text-gray-200">{split.major}</div>
                                                             <div className="flex-1 text-gray-500">{split.minor}</div>
                                                             <div className="flex-1 text-xs">
-                                                                <span className="text-orange-600 bg-orange-50 dark:bg-orange-900/30 dark:text-orange-400 px-1 rounded">{batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}</span>
+                                                                <span className={`${isExpiring ? 'text-red-600 font-bold animate-pulse' : 'text-orange-600'} bg-orange-50 dark:bg-orange-900/30 dark:text-orange-400 px-1 rounded`}>
+                                                                    {batch.expiry_date ? batch.expiry_date.split('T')[0] : '/'}
+                                                                    {isExpiring && ' (临期)'}
+                                                                </span>
                                                             </div>
                                                             <div className="w-20 text-right flex justify-end gap-1">
                                                                 <button onClick={()=>setAdjustBatch(batch)} className="text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded dark:bg-blue-900 dark:text-blue-200">调</button>
@@ -390,6 +430,9 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
                      <div key={item.product.id} className="bg-white dark:bg-gray-800 p-4 rounded-xl shadow-sm border dark:border-gray-700 flex justify-between items-center active:scale-[0.98] transition-transform" onClick={() => onMobileClick(item)}>
                          <div className="flex items-center gap-3">
                              {deleteMode && <input type="checkbox" checked={selectedToDelete.has(item.product.id)} onChange={(e)=>{e.stopPropagation(); toggleSelectProduct(item.product.id, item.batches.map((b:any)=>b.id));}} className="w-5 h-5 rounded accent-blue-600 dark:bg-gray-700 dark:border-white" />}
+                             <div className="w-12 h-12 shrink-0">
+                                 {item.product.image_url ? <img src={item.product.image_url} className="w-full h-full object-cover rounded bg-gray-100" /> : <div className="w-full h-full bg-gray-100 dark:bg-gray-700 rounded flex items-center justify-center text-gray-400"><Icons.Package size={20}/></div>}
+                             </div>
                              <div className="overflow-hidden">
                                  <h3 className="font-bold text-gray-800 dark:text-white text-lg truncate">{item.product.name}</h3>
                                  <p className="text-sm text-gray-500">{formatUnit(item.totalQuantity, item.product)}</p>
@@ -409,15 +452,43 @@ export const InventoryTable = ({ data, onRefresh, currentStore, deleteMode, sele
 };
 
 const EditProductModal = ({ product, onClose, onSuccess }: any) => {
-    const [form, setForm] = useState({ name: product.name, sku: product.sku, category: product.category, unit_name: product.unit_name, split_unit_name: product.split_unit_name, split_ratio: product.split_ratio });
+    const [form, setForm] = useState({ name: product.name, sku: product.sku, category: product.category, unit_name: product.unit_name, split_unit_name: product.split_unit_name, split_ratio: product.split_ratio, image_url: product.image_url });
+    const [uploading, setUploading] = useState(false);
+
+    const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.[0]) return;
+        setUploading(true);
+        try {
+            const url = await dataService.uploadProductImage(e.target.files[0]);
+            if (url) setForm({ ...form, image_url: url });
+        } catch(e: any) { alert(e.message); }
+        finally { setUploading(false); }
+    };
+
     const handleSave = async () => {
         await dataService.updateProduct(product.id, form);
         onSuccess();
     };
+
     return (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl space-y-4">
-                <h3 className="font-bold text-lg dark:text-white">调整商品信息 (不含库存)</h3>
+            <div className="bg-white dark:bg-gray-900 rounded-xl p-6 w-full max-w-md shadow-2xl space-y-4 max-h-[90vh] overflow-y-auto">
+                <h3 className="font-bold text-lg dark:text-white">调整商品信息</h3>
+                
+                {/* Image Section */}
+                <div className="flex flex-col items-center gap-2">
+                    <div className="w-24 h-24 bg-gray-100 dark:bg-gray-800 rounded-lg overflow-hidden border dark:border-gray-700 relative group">
+                        {form.image_url ? (
+                            <img src={form.image_url} className="w-full h-full object-cover" />
+                        ) : <Icons.Package size={32} className="m-auto text-gray-400 mt-8"/>}
+                        {uploading && <div className="absolute inset-0 bg-black/50 flex items-center justify-center text-white text-xs">处理中...</div>}
+                    </div>
+                    <label className="text-xs text-blue-600 font-bold cursor-pointer bg-blue-50 px-3 py-1 rounded hover:bg-blue-100">
+                        {uploading ? '上传中...' : '更换图片 (自动压缩)'}
+                        <input type="file" hidden accept="image/*" onChange={handleFile} disabled={uploading}/>
+                    </label>
+                </div>
+
                 <input className="w-full border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="名称" value={form.name} onChange={e=>setForm({...form, name: e.target.value})} />
                 <div className="grid grid-cols-2 gap-2">
                     <input className="border p-2 rounded dark:bg-gray-800 dark:text-white" placeholder="SKU" value={form.sku} onChange={e=>setForm({...form, sku: e.target.value})} />

@@ -1,6 +1,3 @@
-
-
-
 import React, { useState, useRef, useEffect } from 'react';
 import { Icons } from '../components/Icons';
 import { dataService } from '../services/dataService';
@@ -32,11 +29,13 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
         batch_number: '', 
         qty_big: 0, 
         qty_small: 0,
-        expiry_date: ''
+        expiry_date: '',
+        image_url: '' // Phase 4
     });
 
     const [isScanning, setIsScanning] = useState(false);
     const scannerRef = useRef<any>(null);
+    const [uploadingImage, setUploadingImage] = useState(false);
 
     const FIELD_LABELS: Record<string, string> = {
         name: '商品名称', batch: '批号', quantity: '数量 (总小单位)',
@@ -83,6 +82,21 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
     const getTargetStoreId = () => {
         if (currentStore === 'all') return null;
         return currentStore;
+    };
+
+    const handleImageFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (!e.target.files?.[0]) return;
+        setUploadingImage(true);
+        try {
+            const url = await dataService.uploadProductImage(e.target.files[0]);
+            if (url) {
+                setManualForm(prev => ({ ...prev, image_url: url }));
+            }
+        } catch (e: any) {
+            alert(e.message);
+        } finally {
+            setUploadingImage(false);
+        }
     };
 
     // --- EXCEL HANDLERS ---
@@ -235,11 +249,15 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
                      unit_name: manualForm.unit_name,
                      split_unit_name: sanitizeStr(manualForm.split_unit_name),
                      split_ratio: manualForm.split_ratio,
+                     image_url: manualForm.image_url, // Phase 4
                      bound_store_id: targetId,
                      is_archived: false
                  }).select().single();
                  if (error) throw error;
                  product = newProd;
+             } else if (manualForm.image_url && !product.image_url) {
+                 // Update existing product if it has no image but we uploaded one
+                 await client.from('products').update({ image_url: manualForm.image_url }).eq('id', product.id);
              }
 
              // Calculate total split quantity
@@ -276,7 +294,7 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
              setManualForm({
                 name: '', sku: '', category: '', 
                 unit_name: '件', split_unit_name: DEFAULT_SPLIT_UNIT, split_ratio: 10,
-                batch_number: '', qty_big: 0, qty_small: 0, expiry_date: ''
+                batch_number: '', qty_big: 0, qty_small: 0, expiry_date: '', image_url: ''
              });
 
         } catch(e: any) { alert(e.message); }
@@ -366,10 +384,25 @@ export const Import: React.FC<ImportProps> = ({ currentStore }) => {
              {currentStore !== 'all' && mode === 'MANUAL' && (
                  <div className="bg-white dark:bg-gray-900 p-6 md:p-8 rounded-xl border dark:border-gray-700 shadow-sm max-w-4xl mx-auto space-y-6 max-w-[100vw]">
                      <h3 className="font-bold border-b dark:border-gray-700 pb-2 mb-4 dark:text-white">完整商品录入</h3>
+                     
                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                        <div className="md:col-span-2"><label className="text-sm font-bold dark:text-gray-300">商品名称 *</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.name} onChange={e=>setManualForm({...manualForm, name: e.target.value})}/></div>
-                        <div><label className="text-sm font-bold dark:text-gray-300">SKU</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.sku} onChange={e=>setManualForm({...manualForm, sku: e.target.value})}/></div>
+                        <div className="md:col-span-2 space-y-4">
+                            <div><label className="text-sm font-bold dark:text-gray-300">商品名称 *</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.name} onChange={e=>setManualForm({...manualForm, name: e.target.value})}/></div>
+                            <div><label className="text-sm font-bold dark:text-gray-300">SKU</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.sku} onChange={e=>setManualForm({...manualForm, sku: e.target.value})}/></div>
+                        </div>
+                        <div className="flex flex-col gap-2 items-center justify-center border-2 border-dashed dark:border-gray-600 rounded-lg p-4 bg-gray-50 dark:bg-gray-800">
+                             {manualForm.image_url ? (
+                                 <img src={manualForm.image_url} className="w-24 h-24 object-cover rounded shadow" />
+                             ) : (
+                                 <div className="w-24 h-24 flex items-center justify-center text-gray-300"><Icons.Package size={40}/></div>
+                             )}
+                             <label className="cursor-pointer bg-blue-50 text-blue-600 px-3 py-1 rounded text-xs font-bold hover:bg-blue-100 transition-colors">
+                                 {uploadingImage ? '上传中...' : '上传图片'}
+                                 <input type="file" accept="image/*" hidden onChange={handleImageFile} disabled={uploadingImage} />
+                             </label>
+                        </div>
                      </div>
+
                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                         <div><label className="text-sm font-bold dark:text-gray-300">类别</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.category} onChange={e=>setManualForm({...manualForm, category: e.target.value})}/></div>
                         <div><label className="text-sm font-bold dark:text-gray-300">大单位</label><input className="w-full border p-2 rounded dark:bg-gray-800 dark:border-gray-600 dark:text-white" value={manualForm.unit_name} onChange={e=>setManualForm({...manualForm, unit_name: e.target.value})}/></div>

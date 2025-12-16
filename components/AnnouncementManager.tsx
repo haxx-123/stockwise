@@ -30,8 +30,6 @@ export const AnnouncementManager: React.FC<AnnouncementManagerProps> = ({ onClos
     const loadList = async () => {
         setLoading(true);
         const data = await dataService.getAnnouncements();
-        // Filter out force deleted ones unless admin? dataService already returns active ones usually, 
-        // but let's filter just in case logic changes
         setList(data.filter(a => !a.is_force_deleted));
         setLoading(false);
     };
@@ -44,19 +42,27 @@ export const AnnouncementManager: React.FC<AnnouncementManagerProps> = ({ onClos
             const validUntil = new Date();
             validUntil.setDate(validUntil.getDate() + validDays);
 
-            await dataService.createAnnouncement({
+            const payload = {
                 title,
                 content,
                 creator: user.username,
                 creator_id: user.id,
-                target_users: ['ALL'], // Simplified for now
+                target_users: ['ALL'], 
                 valid_until: validUntil.toISOString(),
                 popup_config: {
                     enabled: popupEnabled,
                     duration: 'ONCE'
                 },
                 allow_delete: true
-            });
+            };
+
+            await dataService.createAnnouncement(payload);
+            
+            // Phase 6: Instant Broadcast if popup is enabled
+            if (popupEnabled) {
+                await dataService.sendBroadcast('ANNOUNCEMENT_POPUP', payload);
+            }
+
             alert("发布成功");
             setTitle('');
             setContent('');
@@ -174,7 +180,7 @@ export const AnnouncementManager: React.FC<AnnouncementManagerProps> = ({ onClos
                                         onChange={e => setPopupEnabled(e.target.checked)}
                                     />
                                     <label htmlFor="popupCheck" className="text-sm font-bold dark:text-gray-300 cursor-pointer">
-                                        强制弹窗通知
+                                        强制弹窗通知 (Broadcast)
                                     </label>
                                 </div>
                             </div>

@@ -1,10 +1,40 @@
 
-export type Store = {
+export type Organization = {
   id: string;
   name: string;
+  plan: 'FREE' | 'PRO' | 'ENTERPRISE';
+  created_at: string;
+};
+
+export type StoreSettings = {
+  theme?: {
+    primary: string;
+    secondary: string;
+    font: string;
+  };
+  tax_rate?: number;
+  business_hours?: string;
+  [key: string]: any; // Allow flexible JSONB properties
+};
+
+export type Store = {
+  id: string;
+  org_id?: string; // Parent Organization
+  name: string;
   location?: string;
-  is_archived?: boolean; // Soft Delete
+  is_headquarters?: boolean; // Is this the HQ?
+  settings?: StoreSettings; // JSONB Configuration
+  is_archived?: boolean; 
   created_at?: string;
+};
+
+export type StoreMember = {
+  id: string;
+  org_id: string;
+  store_id: string;
+  user_id: string;
+  role: 'OWNER' | 'MANAGER' | 'STAFF';
+  joined_at: string;
 };
 
 export type Product = {
